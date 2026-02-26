@@ -8,21 +8,6 @@ const CloudResource = require('../models/CloudResource');
 
 const { S3Client, ListBucketsCommand } = require("@aws-sdk/client-s3");
 
-// Spec Helper
-const getEc2Specs = (type) => {
-    // Simplified map for demo
-    const specs = {
-        't2.micro': { vCpu: 1, memoryGb: 1 },
-        't2.small': { vCpu: 1, memoryGb: 2 },
-        't2.medium': { vCpu: 2, memoryGb: 4 },
-        't3.medium': { vCpu: 2, memoryGb: 4 },
-        'm5.large': { vCpu: 2, memoryGb: 8 },
-        'c5.large': { vCpu: 2, memoryGb: 4 },
-        'r5.large': { vCpu: 2, memoryGb: 16 }
-    };
-    return specs[type] || { vCpu: 1, memoryGb: 1 }; // Default fallback
-};
-
 
 const testConnection = async (provider, credentials) => {
     console.log(`Testing connection for ${provider}...`);

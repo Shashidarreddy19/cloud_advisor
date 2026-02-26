@@ -417,6 +417,15 @@ function CSVUpload() {
                 </div>
             </Section>
 
+            <Section title="Supported Regions">
+                <div style={{ background: 'var(--az-blue-light)', border: '1px solid var(--az-blue)', borderRadius: 8, padding: 16, marginBottom: 20 }}>
+                    <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--az-blue)', marginBottom: 8 }}>
+                        ℹ️ Only data from these regions will receive ML-powered recommendations
+                    </div>
+                </div>
+                <SupportedRegions />
+            </Section>
+
             <Section title="Column Descriptions">
                 <CSVColumns />
             </Section>
@@ -661,6 +670,40 @@ function CSVColumns() {
                     ))}
                 </tbody>
             </table>
+        </div>
+    );
+}
+
+function SupportedRegions() {
+    const regions = {
+        aws: ['ap-northeast-1', 'ap-northeast-2', 'ap-northeast-3', 'ap-south-1', 'ap-southeast-1', 'ap-southeast-2', 'ca-central-1', 'eu-central-1', 'eu-north-1', 'eu-west-1', 'eu-west-2', 'eu-west-3', 'sa-east-1', 'us-east-1', 'us-east-2', 'us-west-1', 'us-west-2'],
+        gcp: ['africa-south1', 'asia-east1', 'asia-east2', 'asia-northeast1', 'asia-northeast2', 'asia-northeast3', 'asia-south1', 'asia-south2', 'asia-southeast1', 'asia-southeast2', 'asia-southeast3', 'australia-southeast1', 'australia-southeast2', 'europe-central2', 'europe-north1', 'europe-north2', 'europe-southwest1', 'europe-west1', 'europe-west10', 'europe-west12', 'europe-west2', 'europe-west3', 'europe-west4', 'europe-west6', 'europe-west8', 'europe-west9', 'me-central1', 'me-central2', 'me-west1', 'northamerica-northeast1', 'northamerica-northeast2', 'northamerica-south1', 'southamerica-east1', 'southamerica-west1', 'us-central1', 'us-east1', 'us-east4', 'us-east5', 'us-south1', 'us-west1', 'us-west2', 'us-west3', 'us-west4'],
+        azure: ['australiacentral', 'australiaeast', 'australiasoutheast', 'austriaeast', 'belgiumcentral', 'brazilsouth', 'canadacentral', 'canadaeast', 'centralindia', 'centralus', 'chilecentral', 'eastasia', 'eastus', 'eastus2', 'eastus2euap', 'eastusstg', 'francecentral', 'germanywestcentral', 'indonesiacentral', 'israelcentral', 'italynorth', 'japaneast', 'japanwest', 'koreacentral', 'koreasouth', 'malaysiawest', 'mexicocentral', 'newzealandnorth', 'northeurope', 'norwayeast', 'polandcentral', 'qatarcentral', 'southafricanorth', 'southcentralus', 'southeastasia', 'southindia', 'spaincentral', 'swedencentral', 'switzerlandnorth', 'uaenorth', 'ukwest', 'westeurope', 'westus2']
+    };
+
+    return (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 20 }}>
+            <RegionCard title="AWS Regions" count={regions.aws.length} regions={regions.aws} color="#FF9900" icon="☁️" />
+            <RegionCard title="GCP Regions" count={regions.gcp.length} regions={regions.gcp} color="#4285F4" icon="🌐" />
+            <RegionCard title="Azure Regions" count={regions.azure.length} regions={regions.azure} color="#0089D6" icon="🔷" />
+        </div>
+    );
+}
+
+function RegionCard({ title, count, regions, color, icon }) {
+    return (
+        <div style={{ background: 'var(--az-card)', border: `2px solid ${color}`, borderRadius: 8, padding: 16 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <span style={{ fontSize: 20 }}>{icon}</span>
+                <h4 style={{ fontSize: 16, fontWeight: 600, color, margin: 0 }}>{title} ({count})</h4>
+            </div>
+            <div style={{ maxHeight: 200, overflowY: 'auto', fontSize: 12, color: 'var(--az-text-2)' }}>
+                <ul style={{ margin: 0, paddingLeft: 20, lineHeight: 1.8 }}>
+                    {regions.map((region, i) => (
+                        <li key={i} style={{ fontFamily: 'monospace' }}>• {region}</li>
+                    ))}
+                </ul>
+            </div>
         </div>
     );
 }

@@ -3,6 +3,7 @@ const { normalizeVM, autoDetectColumns, validateRequiredColumns, NormalizationEr
 const { enrichVMBatch } = require('../services/enrichmentService');
 const { processVMsInBatches } = require('../services/mlService');
 const CSVUpload = require('../models/CSVUpload');
+const Report = require('../models/Report');
 const User = require('../models/User');
 const logger = require('../utils/logger');
 
@@ -245,4 +246,121 @@ const uploadCsv = async (req, res) => {
     }
 };
 
-module.exports = { uploadCsv };
+/**
+ * Cleanup CSV recommendations for user
+ * DELETE /api/csv/cleanup
+ */
+const cleanup = async (req, res) => {
+    try {
+        const { userId, mode } = req.body;
+
+        // Verify user matches authenticated user
+        if (userId !== req.user._id.toString()) {
+            logger.warn(`[Cleanup] Unauthorized cleanup attempt by user ${req.user._id} for user ${userId}`);
+            return res.status(403).json({ error: 'Unauthorized' });
+        }
+
+        // Only cleanup CSV mode data
+        if (mode !== 'csv') {
+            logger.info(`[Cleanup] No cleanup needed for ${mode} mode`);
+            return res.json({
+                success: true,
+                deletedCount: 0,
+                message: 'No cleanup needed for Cloud mode'
+            });
+        }
+
+        // Delete CSV uploads
+        const result = await CSVUpload.deleteMany({
+            userId: userId,
+            mode: 'csv'
+        });
+
+        logger.info(`[Cleanup] User ${userId} - deleted ${result.deletedCount} CSV records at ${new Date().toISOString()}`);
+
+        res.json({
+            success: true,
+            deletedCount: result.deletedCount,
+            message: 'CSV data cleaned up successfully'
+        });
+    } catch (error) {
+        logger.error('[Cleanup] Error:', {
+            operation: 'csv-cleanup',
+            userId: req.body.userId,
+            error: error.message,
+            stack: error.stack,
+            timestamp: new Date().toISOString()
+        });
+
+        res.status(500).json({
+            error: 'Cleanup failed',
+            details: error.message
+        });
+    }
+};
+
+/**
+ * Save recommendations as a persistent report
+ * POST /api/csv/save-report
+ */
+const saveReport = async (req, res) => {
+    try {
+        const { userId, name, type, recommendations } = req.body;
+
+        // Verify user
+        if (userId !== req.user._id.toString()) {
+            logger.warn(`[Save Report] Unauthorized save attempt by user ${req.user._id} for user ${userId}`);
+            return res.status(403).json({ error: 'Unauthorized' });
+        }
+
+        // Calculate summary statistics
+        const summary = {
+            totalRecommendations: recommendations.length,
+            totalSavings: recommendations.reduce((sum, r) => sum + (r.savings || 0), 0),
+            oversizedCount: recommendations.filter(r => (r.finding || '').toUpperCase() === 'OVERSIZED').length,
+            undersizedCount: recommendations.filter(r => (r.finding || '').toUpperCase() === 'UNDERSIZED').length,
+            optimalCount: recommendations.filter(r => (r.finding || '').toUpperCase() === 'OPTIMAL').length,
+            avgConfidence: recommendations.length > 0
+                ? recommendations.reduce((sum, r) => sum + (r.confidence || 0), 0) / recommendations.length
+                : 0
+        };
+
+        // Create report
+        const report = new Report({
+            userId,
+            name: name || `Report - ${new Date().toISOString()}`,
+            type: type || 'CSV',
+            status: 'Generated',
+            recommendations,
+            summary,
+            generatedAt: new Date()
+        });
+
+        await report.save();
+
+        logger.info(`[Save Report] User ${userId} - saved report ${report._id} at ${new Date().toISOString()}`);
+
+        res.json({
+            success: true,
+            reportId: report._id,
+            message: 'Report saved successfully'
+        });
+    } catch (error) {
+        logger.error('[Save Report] Error:', {
+            operation: 'save-report',
+            userId: req.body.userId,
+            error: error.message,
+            stack: error.stack,
+            timestamp: new Date().toISOString(),
+            environment: process.env.NODE_ENV
+        });
+
+        res.status(500).json({
+            error: 'Failed to save report',
+            message: 'Your recommendations are still available. Please try saving again.',
+            details: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
+    }
+};
+
+module.exports = { uploadCsv, cleanup, saveReport };

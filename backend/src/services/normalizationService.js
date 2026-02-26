@@ -265,6 +265,7 @@ function normalizeFromCloud(rawData, cloud) {
 
 /**
  * Normalize AWS EC2 instance data
+ * CRITICAL: Preserve null for missing metrics (don't convert to 0)
  */
 function normalizeAWS(rawData) {
     return {
@@ -273,13 +274,15 @@ function normalizeAWS(rawData) {
         region: parseString(rawData.region, 'region', true),
         instance_id: parseString(rawData.instance_id, 'instance_id', true),
         instance_type: parseString(rawData.instance_type, 'instance_type', true),
-        os: parseString(rawData.os || rawData.platform, 'os') || 'Linux',
+        os: parseString(rawData.os, 'os') || 'unknown',
+        os_source: parseString(rawData.os_source, 'os_source') || 'unresolved',
+        os_confidence: parseString(rawData.os_confidence, 'os_confidence') || 'low',
 
-        // Metrics from CloudWatch
-        cpu_avg: parseNumber(rawData.cpu_avg, 'cpu_avg', 0, 100) || 0,
-        cpu_p95: parseNumber(rawData.cpu_p95, 'cpu_p95', 0, 100) || 0,
-        memory_avg: parseNumber(rawData.memory_avg, 'memory_avg', 0, 100) || 0,
-        memory_p95: parseNumber(rawData.memory_p95, 'memory_p95', 0, 100) || 0,
+        // Metrics from CloudWatch - PRESERVE NULL (use ?? instead of ||)
+        cpu_avg: parseNumber(rawData.cpu_avg, 'cpu_avg', 0, 100) ?? null,
+        cpu_p95: parseNumber(rawData.cpu_p95, 'cpu_p95', 0, 100) ?? null,
+        memory_avg: parseNumber(rawData.memory_avg, 'memory_avg', 0, 100) ?? null,
+        memory_p95: parseNumber(rawData.memory_p95, 'memory_p95', 0, 100) ?? null,
         disk_read_iops: parseNumber(rawData.disk_read_iops, 'disk_read_iops', 0) || 0,
         disk_write_iops: parseNumber(rawData.disk_write_iops, 'disk_write_iops', 0) || 0,
         network_in_bytes: parseNumber(rawData.network_in_bytes || rawData.network_in, 'network_in_bytes', 0) || 0,
@@ -297,6 +300,7 @@ function normalizeAWS(rawData) {
 
 /**
  * Normalize GCP Compute Engine instance data
+ * CRITICAL: Preserve null for missing metrics (don't convert to 0)
  */
 function normalizeGCP(rawData) {
     return {
@@ -305,13 +309,15 @@ function normalizeGCP(rawData) {
         region: parseString(rawData.region || rawData.zone, 'region', true), // Accept both region and zone
         instance_id: parseString(rawData.instance_id, 'instance_id', true),
         instance_type: parseString(rawData.instance_type || rawData.machine_type, 'instance_type', true), // Accept both
-        os: parseString(rawData.os, 'os') || 'Linux',
+        os: parseString(rawData.os, 'os') || 'unknown',
+        os_source: parseString(rawData.os_source, 'os_source') || 'unresolved',
+        os_confidence: parseString(rawData.os_confidence, 'os_confidence') || 'low',
 
-        // Metrics from Cloud Monitoring
-        cpu_avg: parseNumber(rawData.cpu_avg, 'cpu_avg', 0, 100) || 0,
-        cpu_p95: parseNumber(rawData.cpu_p95, 'cpu_p95', 0, 100) || 0,
-        memory_avg: parseNumber(rawData.memory_avg, 'memory_avg', 0, 100) || 0,
-        memory_p95: parseNumber(rawData.memory_p95, 'memory_p95', 0, 100) || 0,
+        // Metrics from Cloud Monitoring - PRESERVE NULL (use ?? instead of ||)
+        cpu_avg: parseNumber(rawData.cpu_avg, 'cpu_avg', 0, 100) ?? null,
+        cpu_p95: parseNumber(rawData.cpu_p95, 'cpu_p95', 0, 100) ?? null,
+        memory_avg: parseNumber(rawData.memory_avg, 'memory_avg', 0, 100) ?? null,
+        memory_p95: parseNumber(rawData.memory_p95, 'memory_p95', 0, 100) ?? null,
         disk_read_iops: parseNumber(rawData.disk_read_iops, 'disk_read_iops', 0) || 0,
         disk_write_iops: parseNumber(rawData.disk_write_iops, 'disk_write_iops', 0) || 0,
         network_in_bytes: parseNumber(rawData.network_in_bytes || rawData.network_in, 'network_in_bytes', 0) || 0,
@@ -329,6 +335,7 @@ function normalizeGCP(rawData) {
 
 /**
  * Normalize Azure VM data
+ * CRITICAL: Preserve null for missing metrics (don't convert to 0)
  */
 function normalizeAzure(rawData) {
     return {
@@ -337,13 +344,15 @@ function normalizeAzure(rawData) {
         region: parseString(rawData.region || rawData.location, 'region', true),
         instance_id: parseString(rawData.instance_id || rawData.vm_id, 'instance_id', true),
         instance_type: parseString(rawData.instance_type || rawData.vm_size, 'instance_type', true),
-        os: parseString(rawData.os || rawData.os_type, 'os') || 'Linux',
+        os: parseString(rawData.os || rawData.os_type, 'os') || 'unknown',
+        os_source: parseString(rawData.os_source, 'os_source') || 'unresolved',
+        os_confidence: parseString(rawData.os_confidence, 'os_confidence') || 'low',
 
-        // Metrics from Azure Monitor
-        cpu_avg: parseNumber(rawData.cpu_avg, 'cpu_avg', 0, 100) || 0,
-        cpu_p95: parseNumber(rawData.cpu_p95, 'cpu_p95', 0, 100) || 0,
-        memory_avg: parseNumber(rawData.memory_avg, 'memory_avg', 0, 100) || 0,
-        memory_p95: parseNumber(rawData.memory_p95, 'memory_p95', 0, 100) || 0,
+        // Metrics from Azure Monitor - PRESERVE NULL (use ?? instead of ||)
+        cpu_avg: parseNumber(rawData.cpu_avg, 'cpu_avg', 0, 100) ?? null,
+        cpu_p95: parseNumber(rawData.cpu_p95, 'cpu_p95', 0, 100) ?? null,
+        memory_avg: parseNumber(rawData.memory_avg, 'memory_avg', 0, 100) ?? null,
+        memory_p95: parseNumber(rawData.memory_p95, 'memory_p95', 0) ?? null,
         disk_read_iops: parseNumber(rawData.disk_read_iops, 'disk_read_iops', 0) || 0,
         disk_write_iops: parseNumber(rawData.disk_write_iops, 'disk_write_iops', 0) || 0,
         network_in_bytes: parseNumber(rawData.network_in_bytes || rawData.network_in, 'network_in_bytes', 0) || 0,

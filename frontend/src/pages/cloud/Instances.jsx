@@ -22,10 +22,107 @@ function StatCard({ icon: Icon, iconBg, iconColor, label, value, sub }) {
 }
 
 function OptBadge({ s }) {
-    if (s === 'OPTIMAL') return <Badge variant="success">Optimal</Badge>;
-    if (s === 'OVERSIZED') return <Badge variant="warning">Oversized</Badge>;
-    if (s === 'UNDERSIZED') return <Badge variant="danger">Undersized</Badge>;
+    const statusUpper = (s || '').toUpperCase();
+
+    if (statusUpper === 'OPTIMAL') {
+        return <Badge variant="success">Optimal</Badge>;
+    }
+    if (statusUpper === 'OVERSIZED' || statusUpper === 'OVERUTILIZED') {
+        return <Badge variant="danger">Oversized</Badge>;
+    }
+    if (statusUpper === 'UNDERSIZED' || statusUpper === 'UNDERUTILIZED') {
+        return <Badge variant="warning">Undersized</Badge>;
+    }
+    if (statusUpper === 'INSUFFICIENT_DATA') {
+        return <Badge variant="neutral">Insufficient Data</Badge>;
+    }
     return <Badge variant="neutral">Unknown</Badge>;
+}
+
+function StatusBadge({ status }) {
+    const statusLower = (status || 'unknown').toLowerCase();
+
+    // Running states
+    if (statusLower === 'running' || statusLower === 'active') {
+        return (
+            <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600,
+                background: 'var(--az-success-bg)', color: 'var(--az-success)'
+            }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--az-success)' }} />
+                Running
+            </span>
+        );
+    }
+
+    // Stopped states
+    if (statusLower === 'stopped' || statusLower === 'deallocated') {
+        return (
+            <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600,
+                background: 'var(--az-warning-bg)', color: '#8A3707'
+            }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#8A3707' }} />
+                Stopped
+            </span>
+        );
+    }
+
+    // Terminated/Deleted states
+    if (statusLower === 'terminated' || statusLower === 'deleted') {
+        return (
+            <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600,
+                background: 'var(--az-error-bg)', color: 'var(--az-error)'
+            }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--az-error)' }} />
+                Terminated
+            </span>
+        );
+    }
+
+    // Pending/Starting states
+    if (statusLower === 'pending' || statusLower === 'starting') {
+        return (
+            <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600,
+                background: 'var(--az-info-bg)', color: 'var(--az-info)'
+            }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--az-info)' }} />
+                Starting
+            </span>
+        );
+    }
+
+    // Stopping states
+    if (statusLower === 'stopping') {
+        return (
+            <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600,
+                background: 'var(--az-warning-bg)', color: '#8A3707'
+            }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#8A3707' }} />
+                Stopping
+            </span>
+        );
+    }
+
+    // Unknown/Other states
+    return (
+        <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 6,
+            padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600,
+            background: '#F3F2F1', color: 'var(--az-text-2)'
+        }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--az-text-3)' }} />
+            {status || 'Unknown'}
+        </span>
+    );
 }
 
 function ProviderBadge({ p }) {
@@ -41,9 +138,22 @@ export default function Instances() {
     const [search, setSearch] = useState('');
     const [filterStatus, setFilterStatus] = useState('all');
     const [filterOpt, setFilterOpt] = useState('all');
+    const [autoRefresh, setAutoRefresh] = useState(true);
     const userId = localStorage.getItem('userId');
 
     useEffect(() => { fetchInstances(); }, []);
+
+    // Auto-refresh every 30 seconds
+    useEffect(() => {
+        if (!autoRefresh) return;
+
+        const intervalId = setInterval(() => {
+            console.log('[Auto-refresh] Fetching latest instances...');
+            fetchInstances(false); // Don't trigger full sync, just refresh data
+        }, 30000); // 30 seconds
+
+        return () => clearInterval(intervalId);
+    }, [autoRefresh]);
 
     const fetchInstances = async (shouldSync = false) => {
         setLoading(true);
@@ -62,7 +172,12 @@ export default function Instances() {
 
     const filtered = instances.filter(i => {
         const matchSearch = !search || i.name.toLowerCase().includes(search.toLowerCase()) || i.resourceId.toLowerCase().includes(search.toLowerCase()) || i.region.toLowerCase().includes(search.toLowerCase());
-        const matchStatus = filterStatus === 'all' || (filterStatus === 'active' && i.status === 'running') || (filterStatus === 'stopped' && i.status === 'stopped');
+        const statusLower = (i.status || '').toLowerCase();
+        const matchStatus = filterStatus === 'all' ||
+            (filterStatus === 'running' && (statusLower === 'running' || statusLower === 'active')) ||
+            (filterStatus === 'stopped' && (statusLower === 'stopped' || statusLower === 'deallocated')) ||
+            (filterStatus === 'terminated' && (statusLower === 'terminated' || statusLower === 'deleted')) ||
+            (filterStatus === 'pending' && (statusLower === 'pending' || statusLower === 'starting' || statusLower === 'stopping'));
         const matchOpt = filterOpt === 'all' || i.optimizationStatus?.toUpperCase() === filterOpt.toUpperCase();
         return matchSearch && matchStatus && matchOpt;
     });
@@ -99,8 +214,10 @@ export default function Instances() {
                 </div>
                 <select className="az-select" value={filterStatus} onChange={e => setFilterStatus(e.target.value)}>
                     <option value="all">All Status</option>
-                    <option value="active">Active</option>
+                    <option value="running">Running</option>
                     <option value="stopped">Stopped</option>
+                    <option value="terminated">Terminated</option>
+                    <option value="pending">Pending/Starting</option>
                 </select>
                 <select className="az-select" value={filterOpt} onChange={e => setFilterOpt(e.target.value)}>
                     <option value="all">All Optimization</option>
@@ -116,12 +233,12 @@ export default function Instances() {
                     <table className="az-table">
                         <thead>
                             <tr>
-                                <th>Provider</th><th>Name / ID</th><th>Type</th><th>Region</th><th>Status</th><th>Optimization</th><th>Savings</th>
+                                <th>Provider</th><th>Name / ID</th><th>Type</th><th>vCPU</th><th>Memory</th><th>Region</th><th>OS</th><th>Status</th><th>Optimization</th><th>Savings</th>
                             </tr>
                         </thead>
                         <tbody>
                             {filtered.length === 0 ? (
-                                <tr><td colSpan={7} style={{ textAlign: 'center', padding: '48px', color: 'var(--az-text-2)' }}>
+                                <tr><td colSpan={10} style={{ textAlign: 'center', padding: '48px', color: 'var(--az-text-2)' }}>
                                     <Server size={40} style={{ color: 'var(--az-border)', marginBottom: 8, display: 'block', margin: '0 auto 8px' }} />
                                     <div style={{ fontWeight: 500 }}>No instances found</div>
                                     <div style={{ fontSize: 12, marginTop: 4 }}>Connect your cloud account to see instances</div>
@@ -134,8 +251,11 @@ export default function Instances() {
                                         <div style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--az-text-3)' }}>{i.resourceId}</div>
                                     </td>
                                     <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{i.resourceType}</td>
+                                    <td style={{ fontSize: 12, color: 'var(--az-text-2)', textAlign: 'center' }}>{i.vCpu || i.vcpu || 'N/A'}</td>
+                                    <td style={{ fontSize: 12, color: 'var(--az-text-2)', textAlign: 'center' }}>{i.memoryGb || i.memory ? `${i.memoryGb || i.memory} GB` : 'N/A'}</td>
                                     <td style={{ fontSize: 12, color: 'var(--az-text-2)' }}>{i.region}</td>
-                                    <td><Badge variant="success">Active</Badge></td>
+                                    <td style={{ fontSize: 12, color: 'var(--az-text-2)' }}>{i.os_type || 'Unknown'}</td>
+                                    <td><StatusBadge status={i.status} /></td>
                                     <td><OptBadge s={i.optimizationStatus} /></td>
                                     <td style={{ fontWeight: 600, color: i.estimatedSavings > 0 ? 'var(--az-success)' : 'var(--az-text-3)' }}>
                                         {i.estimatedSavings > 0 ? `$${i.estimatedSavings.toFixed(2)}/mo` : '—'}

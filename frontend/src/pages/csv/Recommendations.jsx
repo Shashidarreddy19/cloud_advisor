@@ -48,6 +48,9 @@ export default function Recommendations() {
   };
 
   useEffect(() => {
+    // Mark page as visited for cleanup prompt
+    sessionStorage.setItem('visitedRecommendations', 'true');
+
     console.log('[Recommendations] useEffect triggered', { hasState: !!state?.results, state });
     if (state?.results) {
       console.log('[Recommendations] Processing state.results', state.results);

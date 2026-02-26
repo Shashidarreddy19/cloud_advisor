@@ -8,7 +8,16 @@ const CSVUploadSchema = new mongoose.Schema({
     size: { type: Number, required: true },
     uploadDate: { type: Date, default: Date.now },
     status: { type: String, enum: ['pending', 'processed', 'failed'], default: 'pending' },
-    processedRecords: { type: Number, default: 0 }
+    processedRecords: { type: Number, default: 0 },
+
+    // Lifecycle management fields
+    mode: { type: String, enum: ['csv', 'cloud'], default: 'csv' },
+    lastAccessed: { type: Date, default: Date.now },
+    markedForDeletion: { type: Boolean, default: false }
 });
+
+// Indexes for efficient cleanup queries
+CSVUploadSchema.index({ uploadDate: 1, status: 1 });
+CSVUploadSchema.index({ userId: 1, mode: 1 });
 
 module.exports = mongoose.model('CSVUpload', CSVUploadSchema);

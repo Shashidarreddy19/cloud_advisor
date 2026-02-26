@@ -16,7 +16,7 @@ const getDouble = (metrics, key) => {
 };
 
 const getDownsizedType = (current) => {
-    if (!current || current === "unknown") return "t2.micro";
+    if (!current || current === "unknown") return null;
     if (current.endsWith(".2xlarge")) return current.replace(".2xlarge", ".xlarge");
     if (current.endsWith(".xlarge")) return current.replace(".xlarge", ".large");
     if (current.endsWith(".large")) return current.replace(".large", ".medium");
@@ -25,7 +25,7 @@ const getDownsizedType = (current) => {
 };
 
 const getUpsizedType = (current) => {
-    if (!current || current === "unknown") return "t2.large";
+    if (!current || current === "unknown") return null;
     if (current.endsWith(".nano")) return current.replace(".nano", ".micro");
     if (current.endsWith(".micro")) return current.replace(".micro", ".small");
     if (current.endsWith(".small")) return current.replace(".small", ".medium");

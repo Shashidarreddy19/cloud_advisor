@@ -71,14 +71,25 @@ const saveConfig = async (req, res) => {
 const syncResources = async (req, res) => {
     try {
         const { userId } = req.body;
+        logger.info(`🔄 [FULL SYNC] Triggered for user ${userId} - This will detect OS information`);
         const configs = await CloudConfig.find({ userId, status: 'CONNECTED' });
+
+        if (configs.length === 0) {
+            logger.warn(`No connected cloud configs found for user ${userId}`);
+            return res.json({ success: true, message: "No connected clouds to sync" });
+        }
+
+        logger.info(`Found ${configs.length} connected cloud(s) for user ${userId}`);
+
         configs.forEach(config => {
+            logger.info(`Syncing ${config.provider} for user ${userId}...`);
             if (config.provider === 'AWS') awsService.fetchResources(config.userId, config.credentials);
             else if (config.provider === 'Azure') azureService.fetchResources(config.userId, config.credentials);
             else if (config.provider === 'GCP') gcpService.fetchResources(config.userId, config.credentials);
         });
         res.json({ success: true, message: "Sync triggered" });
     } catch (error) {
+        logger.error(`Sync error: ${error.message}`);
         res.status(500).json({ error: error.message });
     }
 };
@@ -316,6 +327,30 @@ const getResourceById = async (req, res) => {
     }
 };
 
+/**
+ * Poll instance states immediately for current user
+ */
+const pollInstanceStates = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id);
+        if (!user) {
+            return res.status(401).json({ error: "User not found" });
+        }
+
+        const { pollUserNow } = require('../services/instanceStatePollingService');
+        const result = await pollUserNow(user._id);
+
+        res.json({
+            success: true,
+            message: `Polled instance states`,
+            updated: result.updated
+        });
+    } catch (error) {
+        logger.error("Poll Instance States Error:", error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
 module.exports = {
     saveConfig,
     syncResources,
@@ -326,5 +361,6 @@ module.exports = {
     getConfig,
     getConfigByUserId,
     analyzeResources,
-    fetchAwsRegions
+    fetchAwsRegions,
+    pollInstanceStates // NEW: On-demand polling
 };

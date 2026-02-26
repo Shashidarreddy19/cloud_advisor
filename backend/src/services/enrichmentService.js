@@ -150,20 +150,22 @@ function estimateMetrics(vm) {
 
 /**
  * Enrich VM with instance specs
+ * ONLY used for CSV uploads - cloud data already has real specs from APIs
  */
 function enrichWithSpecs(vm) {
-    // If vcpu_count and ram_gb are already set and non-zero, use them
-    if (vm.vcpu_count > 0 && vm.ram_gb > 0) {
+    // If vcpu_count and ram_gb are explicitly set (even if zero or null), preserve them
+    // This ensures cloud API data (including null) is never overridden
+    if (vm.vcpu_count !== undefined && vm.ram_gb !== undefined) {
         return vm;
     }
 
-    // Otherwise, estimate from instance type
+    // Only estimate for CSV uploads where specs are completely missing
     const specs = estimateInstanceSpecs(vm.instance_type);
 
     return {
         ...vm,
-        vcpu_count: vm.vcpu_count || specs.vcpu,
-        ram_gb: vm.ram_gb || specs.ram_gb
+        vcpu_count: vm.vcpu_count !== undefined ? vm.vcpu_count : specs.vcpu,
+        ram_gb: vm.ram_gb !== undefined ? vm.ram_gb : specs.ram_gb
     };
 }
 

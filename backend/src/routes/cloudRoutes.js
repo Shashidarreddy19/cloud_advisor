@@ -14,6 +14,7 @@ router.post('/disconnect', authMiddleware, cloudController.deleteConfig);
 // Resource management endpoints
 router.post('/sync', authMiddleware, cloudController.syncResources);
 router.post('/analyze', authMiddleware, cloudController.analyzeResources);
+router.post('/poll-states', authMiddleware, cloudController.pollInstanceStates); // NEW: On-demand state polling
 router.get('/resources/:userId', authMiddleware, cloudController.getResourcesByUserId);
 router.get('/resources', authMiddleware, cloudController.getResources);
 router.get('/resource/:id', authMiddleware, cloudController.getResourceById); // Get single resource by MongoDB ID

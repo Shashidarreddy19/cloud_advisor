@@ -43,11 +43,11 @@ export default function Dashboard() {
       ...r,
       id: r.id || r.resourceId || r.resource_id || r.name || `csv-resource-${i + 1}`,
       cloud: (r.cloud || r.cloud_provider || 'AWS').toUpperCase(),
-      region: r.region || 'us-east-1',
+      region: r.region || 'unknown',
       finding: r.finding || 'Optimal',
       savings: parseFloat(r.savings || 0),
-      currentType: r.instanceType || r.currentType || r.current_vm || r.instance_type || 'm5.large',
-      recommendedType: r.recommendedType || r.recommended_vm || r.recommended_type || r.instanceType || 't3.medium',
+      currentType: r.instanceType || r.currentType || r.current_vm || r.instance_type || 'unknown',
+      recommendedType: r.recommendedType || r.recommended_vm || r.recommended_type || r.instanceType || 'N/A',
       cpuUsage: parseFloat(r.cpuUsage || r.cpu_usage_percent || r.cpuAvg || r.cpu_avg || 0),
       memUsage: parseFloat(r.memUsage || r.memory_usage_percent || r.memoryAvg || r.memory_avg || 0),
       recommendation: r.recommendation || r.reason || (
@@ -206,7 +206,7 @@ export default function Dashboard() {
               <div>
                 <h4 style={{ margin: '0 0 10px 0', fontSize: 11, fontWeight: 600, color: 'var(--az-text-3)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Technical Details</h4>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  {[['Provider', selectedResource.cloud.toUpperCase()], ['Region', selectedResource.region], ['Current Type', selectedResource.currentType || selectedResource.current_vm || 'm5.large'], ['Recommended Type', selectedResource.recommendedType || selectedResource.recommended_vm || 't3.medium']].map(([l, v], i) => (
+                  {[['Provider', selectedResource.cloud.toUpperCase()], ['Region', selectedResource.region], ['Current Type', selectedResource.currentType || selectedResource.current_vm || 'unknown'], ['Recommended Type', selectedResource.recommendedType || selectedResource.recommended_vm || 'N/A']].map(([l, v], i) => (
                     <div key={l}>
                       <p style={{ margin: '0 0 2px 0', fontSize: 11, color: 'var(--az-text-3)' }}>{l}</p>
                       <p style={{ margin: 0, fontSize: 13, fontWeight: 600, color: i === 3 ? 'var(--az-blue)' : 'var(--az-text)', fontFamily: i >= 2 ? 'monospace' : 'inherit' }}>{v}</p>

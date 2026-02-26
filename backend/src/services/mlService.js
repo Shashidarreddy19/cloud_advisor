@@ -11,14 +11,15 @@ const ML_TIMEOUT = 60000; // 60 seconds
 
 /**
  * Transform enriched VM data to ML service format
+ * CRITICAL: Preserve null for missing memory, use 0 for missing CPU (skip ML)
  */
 function transformToMLFormat(enrichedVMs) {
     return {
         items: enrichedVMs.map(vm => ({
-            cpu_avg: vm.cpu_avg || 0,
-            cpu_p95: vm.cpu_p95 || 0,
-            memory_avg: vm.memory_avg || 0,
-            memory_p95: vm.memory_p95 || 0,
+            cpu_avg: vm.cpu_avg ?? 0, // Use 0 if null (will be filtered out)
+            cpu_p95: vm.cpu_p95 ?? 0,
+            memory_avg: vm.memory_avg ?? null, // Preserve null - ML can handle missing memory
+            memory_p95: vm.memory_p95 ?? null, // Preserve null
             disk_read_iops: vm.disk_read_iops || 0,
             disk_write_iops: vm.disk_write_iops || 0,
             network_in_bytes: vm.network_in_bytes || 0,
@@ -29,7 +30,8 @@ function transformToMLFormat(enrichedVMs) {
             cost_per_month: vm.cost_per_month || 0,
             cloud: vm.cloud || 'aws',
             region: vm.region || 'us-east-1',
-            instance_type: vm.instance_type || 'unknown'
+            instance_type: vm.instance_type || 'unknown',
+            os: vm.os || vm.os_type || 'Linux' // Include OS for pricing sensitivity
         }))
     };
 }
@@ -204,6 +206,7 @@ async function checkHealth() {
 
 /**
  * Process VMs with error handling and fallback
+ * CRITICAL: Skip ML if CPU is null, allow ML with null memory (reduced confidence)
  */
 async function processVMsWithML(enrichedVMs) {
     // Check if we have any VMs to process
@@ -211,19 +214,76 @@ async function processVMsWithML(enrichedVMs) {
         return [];
     }
 
+    // Filter VMs: Skip ML if CPU is null (insufficient data)
+    const vmsForML = enrichedVMs.filter(vm => {
+        const hasCPU = vm.cpu_avg !== null && vm.cpu_avg !== undefined;
+        if (!hasCPU) {
+            logger.warn(`Skipping ML for ${vm.instance_id} - CPU metrics missing`);
+        }
+        return hasCPU;
+    });
+
+    // VMs without CPU metrics get insufficient_data status
+    const insufficientDataVMs = enrichedVMs.filter(vm =>
+        vm.cpu_avg === null || vm.cpu_avg === undefined
+    ).map(vm => ({
+        instance_id: vm.instance_id,
+        instance_type: vm.instance_type,
+        region: vm.region,
+        cloud: vm.cloud,
+        status: 'insufficient_data',
+        prediction: 'Insufficient Data',
+        confidence: 0,
+        confidence_flag: 'insufficient',
+        recommendation: null,
+        metrics: {
+            cpu_avg: vm.cpu_avg,
+            cpu_p95: vm.cpu_p95,
+            memory_avg: vm.memory_avg,
+            memory_p95: vm.memory_p95,
+            vcpu_count: vm.vcpu_count,
+            ram_gb: vm.ram_gb,
+            uptime_hours: vm.uptime_hours
+        }
+    }));
+
+    if (vmsForML.length === 0) {
+        logger.info('No VMs with sufficient CPU metrics for ML processing');
+        return insufficientDataVMs;
+    }
+
     try {
         // Try to get predictions from ML service
-        const results = await predictBatch(enrichedVMs);
-        return results;
+        logger.info(`Sending ${vmsForML.length} VMs to ML (${insufficientDataVMs.length} skipped due to missing CPU)`);
+        const results = await predictBatch(vmsForML);
+
+        // Reduce confidence by 10-20% for VMs with null memory
+        const adjustedResults = results.map(result => {
+            const originalVM = vmsForML.find(vm => vm.instance_id === result.instance_id);
+            if (originalVM && (originalVM.memory_avg === null || originalVM.memory_avg === undefined)) {
+                const confidenceReduction = 0.15; // 15% reduction
+                const adjustedConfidence = Math.max(0, result.confidence - confidenceReduction);
+                logger.info(`Reduced confidence for ${result.instance_id} due to missing memory: ${result.confidence.toFixed(2)} -> ${adjustedConfidence.toFixed(2)}`);
+                return {
+                    ...result,
+                    confidence: adjustedConfidence,
+                    confidence_flag: adjustedConfidence < 0.50 ? 'insufficient' :
+                        adjustedConfidence < 0.75 ? 'low' : null
+                };
+            }
+            return result;
+        });
+
+        return [...adjustedResults, ...insufficientDataVMs];
 
     } catch (error) {
         logger.error('ML processing failed, returning VMs with error status', {
             error: error.message,
-            vmCount: enrichedVMs.length
+            vmCount: vmsForML.length
         });
 
         // Return VMs with error status instead of failing completely
-        return enrichedVMs.map(vm => ({
+        const errorVMs = vmsForML.map(vm => ({
             instance_id: vm.instance_id,
             instance_type: vm.instance_type,
             region: vm.region,
@@ -241,6 +301,8 @@ async function processVMsWithML(enrichedVMs) {
                 uptime_hours: vm.uptime_hours
             }
         }));
+
+        return [...errorVMs, ...insufficientDataVMs];
     }
 }
 

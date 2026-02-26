@@ -4,6 +4,8 @@ const cors = require('cors');
 const connectDB = require('./config/db');
 const logger = require('./utils/logger');
 const { errorHandler } = require('./middleware/errorHandler');
+const { startCleanupJob } = require('./services/cleanupService');
+const { startPolling: startInstanceStatePolling } = require('./services/instanceStatePollingService');
 
 // Routes
 const authRoutes = require('./routes/authRoutes');
@@ -77,4 +79,11 @@ app.use(errorHandler);
 // Start Server
 app.listen(PORT, () => {
     logger.info(`Server running on port ${PORT}`);
+
+    // Start background cleanup job
+    startCleanupJob();
+
+    // Start instance state polling (every 30 seconds)
+    startInstanceStatePolling();
+    logger.info('Instance state polling service started');
 });

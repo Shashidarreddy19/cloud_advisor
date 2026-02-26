@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { useEffect } from "react";
 import { AuthProvider } from "./context/AuthContext";
 import { ModeProvider } from "./context/ModeContext";
 
@@ -42,6 +43,69 @@ function ProtectedRoute({ children }) {
 }
 
 export default function App() {
+  useEffect(() => {
+    const handleBeforeUnload = (event) => {
+      // Detect event type: refresh vs close
+      const isRefresh = performance.navigation?.type === 1 ||
+        performance.getEntriesByType?.('navigation')[0]?.type === 'reload';
+
+      if (isRefresh) {
+        // Don't cleanup on refresh
+        return;
+      }
+
+      // Check if user visited recommendations page
+      const visitedRecs = sessionStorage.getItem('visitedRecommendations');
+      const hasCSVData = localStorage.getItem('offlineAnalysis');
+
+      if (visitedRecs && hasCSVData) {
+        // Show browser's native save prompt
+        event.preventDefault();
+        event.returnValue = 'You have unsaved recommendations. Save before closing?';
+
+        // Execute cleanup with save option
+        // Note: Modern browsers show generic message, not custom text
+        // The actual save/cleanup logic will be handled by sessionManager
+        const userId = localStorage.getItem('userId');
+        if (userId) {
+          // Send cleanup beacon
+          const cleanupData = JSON.stringify({ userId, mode: 'csv' });
+          navigator.sendBeacon('/api/csv/cleanup', cleanupData);
+
+          // Clear auth tokens
+          localStorage.removeItem('token');
+          localStorage.removeItem('userId');
+          localStorage.removeItem('user');
+          localStorage.removeItem('offlineAnalysis');
+        }
+      } else if (hasCSVData) {
+        // Silent cleanup (no visit recorded)
+        const userId = localStorage.getItem('userId');
+        if (userId) {
+          const cleanupData = JSON.stringify({ userId, mode: 'csv' });
+          navigator.sendBeacon('/api/csv/cleanup', cleanupData);
+
+          // Clear auth tokens
+          localStorage.removeItem('token');
+          localStorage.removeItem('userId');
+          localStorage.removeItem('user');
+          localStorage.removeItem('offlineAnalysis');
+        }
+      } else {
+        // Just logout (no CSV data)
+        localStorage.removeItem('token');
+        localStorage.removeItem('userId');
+        localStorage.removeItem('user');
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
+
   return (
     <AuthProvider>
       <ModeProvider>
