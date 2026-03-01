@@ -1,8 +1,33 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { CheckCircle, TrendingDown, AlertTriangle, ArrowRight, Download, RefreshCw, Search, DollarSign, Activity, UploadCloud, FileText, ChevronDown, ChevronUp, Cpu, MemoryStick, Target, Filter, Trash2 } from 'lucide-react';
+import { CheckCircle, TrendingDown, AlertTriangle, ArrowRight, Download, RefreshCw, Search, DollarSign, Activity, UploadCloud, FileText, ChevronDown, ChevronUp, Cpu, MemoryStick, Target, Filter, Trash2, Clock } from 'lucide-react';
 import Toast from '../../components/common/Toast';
+import AIAnalysisPanel from '../../components/common/AIAnalysisPanel';
 import api from '../../services/api';
+
+// Format timestamp for display
+function formatTimestamp(timestamp) {
+  if (!timestamp) return 'No timestamp';
+  try {
+    const date = new Date(timestamp);
+    if (isNaN(date.getTime())) return 'No timestamp';
+
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return 'Just now';
+    if (diffMins < 60) return `${diffMins}m ago`;
+    if (diffHours < 24) return `${diffHours}h ago`;
+    if (diffDays < 7) return `${diffDays}d ago`;
+
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch (e) {
+    return 'No timestamp';
+  }
+}
 
 function ProvBadge({ c }) {
   const m = { aws: '#FFF4E5,#D47A00', azure: 'var(--az-blue-light),var(--az-blue)', gcp: '#F0FDF4,var(--az-success)' };
@@ -42,7 +67,17 @@ export default function Recommendations() {
   const showToast = (message, type = 'success') => setToastState({ message, type });
 
   const clearCacheAndRetry = () => {
+    // Clear localStorage
     localStorage.removeItem('offlineAnalysis');
+    // Clear current state
+    setRecs([]);
+    setExpandedRow(null);
+    setReportSaved(false);
+    setFilter('all');
+    setProviderFilter('all');
+    setSearchQuery('');
+    setHasMLError(false);
+    // Show success message and redirect to upload page
     showToast('Cache cleared! Please upload your CSV again.', 'success');
     setTimeout(() => navigate('/csv/upload'), 1500);
   };
@@ -91,24 +126,43 @@ export default function Recommendations() {
       r.recommendation?.includes('unavailable') ||
       (r.cpuUsage === 0 && r.memUsage === 0 && r.costPerMonth === 0)
     );
-    setHasMLError(hasErrors);
 
-    setRecs(resultsArray.map((r, i) => ({
-      id: r.id || `res-${i}`,
-      name: r.name || `Resource ${i + 1}`,
-      cloud: (r.cloud || 'aws').toLowerCase(),
-      region: r.region || 'us-east-1',
-      finding: r.finding || 'Optimal',
-      instanceType: r.instanceType || r.current_vm || '—',
-      recommendedType: r.recommendedType || r.recommended_vm || '—',
-      cpuUsage: parseFloat(r.cpuUsage || r.cpu_usage_percent || 0),
-      memUsage: parseFloat(r.memUsage || r.memory_usage_percent || 0),
-      savings: parseFloat(r.savings || 0),
-      confidence: parseFloat(r.confidence || 0),
-      costPerMonth: parseFloat(r.costPerMonth || r.cost_per_month || 0),
-      optimizedCostPerMonth: parseFloat(r.optimizedCostPerMonth ?? r.costPerMonth ?? 0),
-      recommendation: r.recommendation || r.reason || 'Resource is optimally provisioned.',
-    })));
+    // AUTOMATIC FIX: If ML errors detected, clear cache and show message
+    if (hasErrors) {
+      console.warn('[Recommendations] ML error data detected - auto-clearing cache');
+      localStorage.removeItem('offlineAnalysis');
+      setHasMLError(true);
+    } else {
+      setHasMLError(false);
+    }
+
+    setRecs(resultsArray.map((r, i) => {
+      console.log(`[Recommendations] Processing VM ${i}:`, {
+        name: r.name,
+        hasAiAnalysis: !!r.aiAnalysis,
+        aiAnalysisType: r.aiAnalysis?.type
+      });
+
+      return {
+        id: r.id || `res-${i}`,
+        name: r.name || `Resource ${i + 1}`,
+        cloud: (r.cloud || 'aws').toLowerCase(),
+        region: r.region || 'us-east-1',
+        finding: r.finding || 'Optimal',
+        instanceType: r.instanceType || r.current_vm || '—',
+        recommendedType: r.recommendedType || r.recommended_vm || '—',
+        cpuUsage: parseFloat(r.cpuUsage || r.cpu_usage_percent || 0),
+        memUsage: parseFloat(r.memUsage || r.memory_usage_percent || 0),
+        savings: parseFloat(r.savings || 0),
+        confidence: parseFloat(r.confidence || 0),
+        costPerMonth: parseFloat(r.costPerMonth || r.cost_per_month || 0),
+        optimizedCostPerMonth: parseFloat(r.optimizedCostPerMonth ?? r.costPerMonth ?? 0),
+        recommendation: r.recommendation || r.reason || 'Resource is optimally provisioned.',
+        aiAnalysis: r.aiAnalysis || null,
+        timestamp: r.timestamp || r.createdAt || r.updatedAt || null,
+        dataQuality: r.dataQuality || 'medium',
+      };
+    }));
     setLoading(false);
   };
 
@@ -117,6 +171,10 @@ export default function Recommendations() {
   const optimalCount = recs.filter(r => r.finding === 'Optimal').length;
   const totalSavings = recs.filter(r => r.finding === 'Oversized').reduce((s, r) => s + (r.savings || 0), 0);
   const totalSavingsINR = totalSavings * USD_TO_INR;
+
+  // Check if timestamp column is missing
+  const hasTimestamps = recs.some(r => r.timestamp && r.timestamp !== null);
+  const hasDataQuality = recs.some(r => r.dataQuality && r.dataQuality !== 'medium');
 
   const filtered = recs.filter(r => {
     const ms = filter === 'all' || r.finding === filter;
@@ -208,6 +266,20 @@ export default function Recommendations() {
         </div>
       )}
 
+      {/* Missing Timestamp Info */}
+      {!hasMLError && !hasTimestamps && recs.length > 0 && (
+        <div style={{ background: '#E3F2FD', border: '1px solid #2196F3', borderRadius: 8, padding: '16px 20px', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+          <Clock size={20} style={{ color: '#2196F3', flexShrink: 0, marginTop: 2 }} />
+          <div style={{ flex: 1 }}>
+            <h4 style={{ margin: '0 0 4px 0', fontSize: 14, fontWeight: 600, color: 'var(--az-text)' }}>ℹ️ Timestamp Column Not Found</h4>
+            <p style={{ margin: 0, fontSize: 13, color: 'var(--az-text-2)', lineHeight: 1.5 }}>
+              Your CSV doesn't include a timestamp column. Recommendations are based on default 30-day data coverage assumption.
+              For more accurate predictions, include a <code style={{ background: 'var(--az-bg)', padding: '1px 4px', borderRadius: 2, fontFamily: 'monospace', fontSize: 11 }}>timestamp</code> column in your CSV.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Empty / Loading */}
       {loading && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 180, background: '#fff', border: '1px solid var(--az-border)', borderRadius: 6 }}>
@@ -291,6 +363,17 @@ export default function Recommendations() {
           {/* Recommendation list */}
           {filtered.length > 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {/* Table Header */}
+              <div style={{ background: 'var(--az-surface)', border: '1px solid var(--az-border)', borderRadius: 6, padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ width: 60, fontSize: 11, fontWeight: 600, color: 'var(--az-text-2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Provider</div>
+                <div style={{ flex: 1, minWidth: 0, fontSize: 11, fontWeight: 600, color: 'var(--az-text-2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Instance / Type</div>
+                <div style={{ width: 100, fontSize: 11, fontWeight: 600, color: 'var(--az-text-2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Status</div>
+                <div style={{ width: 90, fontSize: 11, fontWeight: 600, color: 'var(--az-text-2)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Confidence</div>
+                <div style={{ width: 90, fontSize: 11, fontWeight: 600, color: 'var(--az-text-2)', textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'right' }}>Current Cost</div>
+                <div style={{ width: 140, fontSize: 11, fontWeight: 600, color: 'var(--az-text-2)', textTransform: 'uppercase', letterSpacing: '0.05em', textAlign: 'center' }}>Savings</div>
+                <div style={{ width: 26 }}></div>
+              </div>
+
               {filtered.map((rec, idx) => {
                 const isExpanded = expandedRow === idx;
                 // Use the real optimized cost from the ML endpoint.
@@ -311,7 +394,14 @@ export default function Recommendations() {
                           <span style={{ fontWeight: 600, fontSize: 13, color: 'var(--az-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 220 }}>{rec.name}</span>
                           <span style={{ fontSize: 11, fontFamily: 'monospace', color: 'var(--az-text-3)' }}>{rec.instanceType}</span>
                         </div>
-                        <div style={{ fontSize: 11, color: 'var(--az-text-3)' }}>{rec.region}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: 'var(--az-text-3)' }}>
+                          <span>{rec.region}</span>
+                          <span>•</span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                            <Clock size={10} />
+                            {formatTimestamp(rec.timestamp)}
+                          </div>
+                        </div>
                       </div>
                       <StatusBadge status={rec.finding} />
                       <ConfBadge c={rec.confidence} />
@@ -363,6 +453,9 @@ export default function Recommendations() {
                             )}
                           </div>
                         )}
+
+                        {/* AI Analysis Panel */}
+                        <AIAnalysisPanel aiAnalysis={rec.aiAnalysis} />
                       </div>
                     )}
                   </div>

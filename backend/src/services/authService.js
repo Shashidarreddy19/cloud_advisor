@@ -17,7 +17,11 @@ const signup = async (userData) => {
 };
 
 const login = async (username, password) => {
-    const user = await User.findOne({ username });
+    // Support login with either username or email
+    const user = await User.findOne({
+        $or: [{ username }, { email: username }]
+    });
+
     if (!user || user.password !== password) {
         throw new Error("Invalid username or password");
     }
@@ -29,7 +33,7 @@ const login = async (username, password) => {
         { expiresIn: '24h' }
     );
 
-    return { token, username, userId: user._id };
+    return { token, username: user.username, userId: user._id };
 };
 
 const logout = (token) => {

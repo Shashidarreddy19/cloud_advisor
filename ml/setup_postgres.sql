@@ -107,30 +107,88 @@ LEFT JOIN gcp_vm_costs c
 WHERE u.cloud = 'gcp';
 
 -- ---------------------------------------------------------------------------
--- Step 4: Seed data — realistic vm_usage rows for all 3 clouds
+-- Step 4: unknown_instance_types — track unresolvable instance types
 -- ---------------------------------------------------------------------------
-INSERT INTO vm_usage (cloud, region, instance_id, instance_type, avg_cpu_pct, avg_memory_pct, sample_start, sample_end)
-VALUES
-  -- AWS — mix of oversized, undersized, optimal
-  ('aws','us-east-1','i-0a1b2c3d4e5f6a001','m5.large',    4.5,  12.3, NOW()-INTERVAL '7d', NOW()),
-  ('aws','us-east-1','i-0a1b2c3d4e5f6a002','m5.xlarge',   6.1,  18.0, NOW()-INTERVAL '7d', NOW()),
-  ('aws','us-east-1','i-0a1b2c3d4e5f6a003','c5.large',   88.4,  74.2, NOW()-INTERVAL '7d', NOW()),
-  ('aws','us-west-2','i-0a1b2c3d4e5f6a004','t3.medium',  52.0,  55.0, NOW()-INTERVAL '7d', NOW()),
-  ('aws','us-west-2','i-0a1b2c3d4e5f6a005','r5.large',    3.1,   8.5, NOW()-INTERVAL '7d', NOW()),
-  ('aws','eu-west-1','i-0a1b2c3d4e5f6a006','m5.2xlarge',  7.2,  20.1, NOW()-INTERVAL '7d', NOW()),
-  ('aws','eu-west-1','i-0a1b2c3d4e5f6a007','c5.xlarge',  91.5,  68.3, NOW()-INTERVAL '7d', NOW()),
+CREATE TABLE IF NOT EXISTS unknown_instance_types (
+    id              SERIAL PRIMARY KEY,
+    instance_type   VARCHAR(200) NOT NULL,
+    cloud           VARCHAR(10)  NOT NULL CHECK (cloud IN ('aws', 'azure', 'gcp')),
+    region          VARCHAR(100) NOT NULL,
+    detected_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    UNIQUE (cloud, instance_type, region)
+);
 
-  -- Azure
-  ('azure','eastus',      '/subscriptions/sub1/vm/vm-prod-001','Standard_D2s_v3', 5.3,  11.0, NOW()-INTERVAL '7d', NOW()),
-  ('azure','eastus',      '/subscriptions/sub1/vm/vm-prod-002','Standard_D4s_v3',87.2,  73.6, NOW()-INTERVAL '7d', NOW()),
-  ('azure','westeurope',  '/subscriptions/sub1/vm/vm-prod-003','Standard_B2ms',  48.5,  51.2, NOW()-INTERVAL '7d', NOW()),
-  ('azure','westeurope',  '/subscriptions/sub1/vm/vm-prod-004','Standard_D8s_v3', 4.1,   9.3, NOW()-INTERVAL '7d', NOW()),
-  ('azure','southeastasia','/subscriptions/sub1/vm/vm-prod-005','Standard_E4s_v3',93.1,  88.0, NOW()-INTERVAL '7d', NOW()),
+CREATE INDEX IF NOT EXISTS idx_unknown_instance_types_cloud_type 
+    ON unknown_instance_types(cloud, instance_type);
 
-  -- GCP
-  ('gcp','us-central1','projects/proj1/zones/us-central1-a/instances/gce-001','n2-standard-2', 5.8,  14.2, NOW()-INTERVAL '7d', NOW()),
-  ('gcp','us-central1','projects/proj1/zones/us-central1-a/instances/gce-002','n2-standard-4',85.9,  70.1, NOW()-INTERVAL '7d', NOW()),
-  ('gcp','us-east1',   'projects/proj1/zones/us-east1-b/instances/gce-003',   'e2-standard-2',50.2,  49.8, NOW()-INTERVAL '7d', NOW()),
-  ('gcp','europe-west1','projects/proj1/zones/europe-west1-b/instances/gce-004','n2-standard-8',3.2,  7.9, NOW()-INTERVAL '7d', NOW()),
-  ('gcp','europe-west1','projects/proj1/zones/europe-west1-b/instances/gce-005','n2-highcpu-4',92.3, 65.5, NOW()-INTERVAL '7d', NOW())
-ON CONFLICT (cloud, instance_id, sample_start) DO NOTHING;
+-- ---------------------------------------------------------------------------
+-- Step 5: Add region availability columns to instance size tables
+-- ---------------------------------------------------------------------------
+-- Note: These ALTER TABLE statements will only add the column if it doesn't exist
+-- The available column defaults to true for existing data
+
+-- AWS instance sizes
+DO $$ 
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'aws_instance_sizes' AND column_name = 'available'
+    ) THEN
+        ALTER TABLE aws_instance_sizes ADD COLUMN available BOOLEAN DEFAULT true;
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_aws_instance_sizes_type_region_available 
+    ON aws_instance_sizes(instance_type, region, available);
+
+-- Azure VM sizes
+DO $$ 
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'azure_vm_sizes' AND column_name = 'available'
+    ) THEN
+        ALTER TABLE azure_vm_sizes ADD COLUMN available BOOLEAN DEFAULT true;
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_azure_vm_sizes_size_region_available 
+    ON azure_vm_sizes(vm_size, region, available);
+
+-- GCP VM sizes
+DO $$ 
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'gcp_vm_sizes' AND column_name = 'available'
+    ) THEN
+        ALTER TABLE gcp_vm_sizes ADD COLUMN available BOOLEAN DEFAULT true;
+    END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS idx_gcp_vm_sizes_type_region_available 
+    ON gcp_vm_sizes(instance_type, region, available);
+
+-- ---------------------------------------------------------------------------
+-- Step 6: Separate GCP region and zone
+-- ---------------------------------------------------------------------------
+-- Add zone column to gcp_vm_sizes if it doesn't exist
+DO $$ 
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'gcp_vm_sizes' AND column_name = 'zone'
+    ) THEN
+        ALTER TABLE gcp_vm_sizes ADD COLUMN zone VARCHAR(100);
+    END IF;
+END $$;
+
+-- Migrate existing data: extract region from zone if zone contains a dash
+-- Example: us-central1-c → region: us-central1, zone: us-central1-c
+UPDATE gcp_vm_sizes 
+SET zone = region,
+    region = SUBSTRING(region FROM '^([^-]+-[^-]+)')
+WHERE region LIKE '%-%-%' AND zone IS NULL;
+
+COMMENT ON COLUMN gcp_vm_sizes.region IS 'GCP region (e.g., us-central1)';
+COMMENT ON COLUMN gcp_vm_sizes.zone IS 'GCP zone (e.g., us-central1-c)';

@@ -7,8 +7,11 @@ const CSVUploadSchema = new mongoose.Schema({
     path: { type: String, required: true },
     size: { type: Number, required: true },
     uploadDate: { type: Date, default: Date.now },
-    status: { type: String, enum: ['pending', 'processed', 'failed'], default: 'pending' },
+    status: { type: String, enum: ['pending', 'processed', 'failed', 'awaiting_timestamp'], default: 'pending' },
     processedRecords: { type: Number, default: 0 },
+
+    // Temporary storage for normalized data (used when awaiting timestamp input)
+    normalizedData: { type: mongoose.Schema.Types.Mixed, default: undefined },
 
     // Lifecycle management fields
     mode: { type: String, enum: ['csv', 'cloud'], default: 'csv' },

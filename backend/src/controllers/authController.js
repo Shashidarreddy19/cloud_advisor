@@ -13,9 +13,16 @@ const signup = async (req, res) => {
 const login = async (req, res) => {
     try {
         const { username, password } = req.body;
+
+        // Validate input
+        if (!username || !password) {
+            return res.status(400).json({ error: 'Username/email and password are required' });
+        }
+
         const result = await authService.login(username, password);
         res.json(result);
     } catch (e) {
+        console.error('Login error:', e.message);
         res.status(401).json({ error: e.message });
     }
 };

@@ -11,6 +11,10 @@ export default function CsvUpload() {
   const [analyzing, setAnalyzing] = useState(false);
   const [error, setError] = useState(null);
   const [toastState, setToastState] = useState(null);
+  const [showTimestampModal, setShowTimestampModal] = useState(false);
+  const [timeRange, setTimeRange] = useState('30');
+  const [customDays, setCustomDays] = useState('');
+  const [processingTimestamp, setProcessingTimestamp] = useState(false);
 
   const onDrop = useCallback(acceptedFiles => {
     if (acceptedFiles?.length > 0) { setFile(acceptedFiles[0]); setError(null); }
@@ -36,6 +40,14 @@ export default function CsvUpload() {
     formData.append('file', file);
     try {
       const res = await api.post('/csv/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+
+      // Check if timestamp is needed
+      if (res.data.status === 'needs_timestamp') {
+        setAnalyzing(false);
+        setShowTimestampModal(true);
+        return;
+      }
+
       setToastState({ message: 'Analysis complete!', type: 'success' });
       // Handle new response format: { success: true, count: X, results: [...] }
       const results = res.data.results || res.data;
@@ -61,6 +73,31 @@ export default function CsvUpload() {
         setError(msg); setToastState({ message: 'Upload failed', type: 'error' });
       }
     } finally { setAnalyzing(false); }
+  };
+
+  const handleTimestampSubmit = async () => {
+    const userId = localStorage.getItem('userId');
+    const selectedRange = timeRange === 'custom' ? parseInt(customDays, 10) : parseInt(timeRange, 10);
+
+    if (timeRange === 'custom' && (!customDays || selectedRange <= 0)) {
+      setToastState({ message: 'Please enter a valid number of days', type: 'error' });
+      return;
+    }
+
+    setProcessingTimestamp(true);
+    try {
+      const res = await api.post('/csv/provide-timestamp', { userId, timeRange: selectedRange });
+      setShowTimestampModal(false);
+      setToastState({ message: 'Analysis complete!', type: 'success' });
+      const results = res.data.results || res.data;
+      localStorage.setItem('offlineAnalysis', JSON.stringify(results));
+      navigate('/csv/recommendations', { state: { results } });
+    } catch (err) {
+      const msg = err.response?.data?.error || err.response?.data?.message || 'Failed to process timestamp';
+      setToastState({ message: msg, type: 'error' });
+    } finally {
+      setProcessingTimestamp(false);
+    }
   };
 
   return (
@@ -126,6 +163,83 @@ export default function CsvUpload() {
           </div>
         ))}
       </div>
+
+      {/* Timestamp Prompt Modal */}
+      {showTimestampModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div style={{ background: '#fff', borderRadius: 8, padding: 24, maxWidth: 480, width: '90%', boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)' }}>
+            <h2 style={{ margin: '0 0 12px 0', fontSize: 18, fontWeight: 600, color: 'var(--az-text)' }}>Missing Timestamp Column</h2>
+            <p style={{ margin: '0 0 20px 0', fontSize: 14, color: 'var(--az-text-2)' }}>
+              Your CSV is missing a timestamp column. Please select the time range covered by your data:
+            </p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
+              {['7', '14', '30'].map(days => (
+                <label key={days} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', border: '1px solid var(--az-border)', borderRadius: 6, cursor: 'pointer', background: timeRange === days ? 'var(--az-blue-light)' : '#fff', transition: 'all 0.15s' }}>
+                  <input
+                    type="radio"
+                    name="timeRange"
+                    value={days}
+                    checked={timeRange === days}
+                    onChange={(e) => setTimeRange(e.target.value)}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <span style={{ fontSize: 14, color: 'var(--az-text)' }}>{days} days</span>
+                </label>
+              ))}
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', border: '1px solid var(--az-border)', borderRadius: 6, cursor: 'pointer', background: timeRange === 'custom' ? 'var(--az-blue-light)' : '#fff', transition: 'all 0.15s' }}>
+                <input
+                  type="radio"
+                  name="timeRange"
+                  value="custom"
+                  checked={timeRange === 'custom'}
+                  onChange={(e) => setTimeRange(e.target.value)}
+                  style={{ cursor: 'pointer' }}
+                />
+                <span style={{ fontSize: 14, color: 'var(--az-text)' }}>Custom</span>
+              </label>
+
+              {timeRange === 'custom' && (
+                <div style={{ marginLeft: 32, marginTop: 4 }}>
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="Enter number of days"
+                    value={customDays}
+                    onChange={(e) => setCustomDays(e.target.value)}
+                    style={{ width: '100%', padding: '8px 12px', border: '1px solid var(--az-border)', borderRadius: 4, fontSize: 14 }}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => { setShowTimestampModal(false); setFile(null); }}
+                disabled={processingTimestamp}
+                className="az-btn az-btn-secondary"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleTimestampSubmit}
+                disabled={processingTimestamp}
+                className="az-btn az-btn-primary"
+              >
+                {processingTimestamp ? (
+                  <>
+                    <Loader2 size={14} className="az-spin" />
+                    Processing...
+                  </>
+                ) : (
+                  'Continue'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {toastState && <Toast message={toastState.message} type={toastState.type} onClose={() => setToastState(null)} />}
     </div>

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Server, Archive, RefreshCw, Trash2, AlertTriangle, ArrowUpRight, TrendingDown } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
+import * as localStorageService from '../../services/localStorageService';
 import Badge from '../../components/common/Badge';
 import Button from '../../components/common/Button';
 import CloudAccessWarning from '../../components/common/CloudAccessWarning';
@@ -43,6 +44,7 @@ export default function CloudDashboard() {
     const [resources, setResources] = useState([]);
     const [recommendations, setRecommendations] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [syncProgress, setSyncProgress] = useState({ elapsed: 0, status: '' });
     const [activeTab, setActiveTab] = useState('instances');
     const [userId] = useState(localStorage.getItem('userId'));
     const [searchParams] = useSearchParams();
@@ -50,10 +52,34 @@ export default function CloudDashboard() {
     const [invalidCredentials, setInvalidCredentials] = useState([]);
 
     useEffect(() => {
-        const tab = searchParams.get('tab');
-        if (tab) setActiveTab(tab);
-        fetchResources(false);
-        checkCloudConfigs();
+        const initializePage = async () => {
+            // SECURITY: Migrate old shared data to user-specific storage
+            localStorageService.migrateToUserSpecificStorage();
+
+            const tab = searchParams.get('tab');
+            if (tab) setActiveTab(tab);
+
+            // Check cloud configs first
+            await checkCloudConfigs();
+
+            // Load from localStorage
+            loadResourcesFromLocalStorage();
+
+            // Check if we need to auto-fetch
+            const existingData = localStorageService.getResources();
+            const needsRefresh = localStorageService.needsRefresh(5); // 5 minutes threshold
+
+            // Auto-fetch immediately if (no data OR stale data)
+            if (existingData.length === 0 || needsRefresh) {
+                console.log('[Dashboard] Auto-fetching resources immediately...', {
+                    noData: existingData.length === 0,
+                    stale: needsRefresh
+                });
+                fetchResources(true); // No delay - fetch immediately
+            }
+        };
+
+        initializePage();
     }, [searchParams]);
 
     const checkCloudConfigs = async () => {
@@ -69,46 +95,95 @@ export default function CloudDashboard() {
         }
     };
 
-    const fetchResources = async (shouldSync = false) => {
+    const loadResourcesFromLocalStorage = () => {
         setLoading(true);
         try {
-            if (shouldSync) {
-                const syncRes = await api.post('/cloud/sync', { userId });
-                // Check if sync failed due to credentials
-                if (syncRes.data.error && syncRes.data.error.includes('credentials')) {
-                    await checkCloudConfigs();
-                }
-            }
+            const fetchedResources = localStorageService.getResources();
+            console.log('[Dashboard] Loaded from localStorage:', fetchedResources.length, 'resources');
 
-            // Fetch resources
-            const resResources = await api.get(`/cloud/resources/${userId}`);
-            if (resResources.data.success) {
-                const fetchedResources = resResources.data.resources;
-                setResources(fetchedResources);
+            setResources(fetchedResources);
 
-                // Generate recommendations from resources that need optimization
-                const recs = fetchedResources
-                    .filter(r => r.optimizationStatus && r.optimizationStatus !== 'OPTIMAL' && r.estimatedSavings > 0)
-                    .map(r => ({
-                        id: r.resourceId,
-                        name: r.name,
-                        region: r.region,
-                        finding: r.optimizationStatus === 'OVERSIZED' ? 'Oversized' : 'Undersized',
-                        savings: r.estimatedSavings || 0
-                    }))
-                    .sort((a, b) => b.savings - a.savings);
+            // Generate recommendations from resources that need optimization
+            const recs = fetchedResources
+                .filter(r => r.optimizationStatus && r.optimizationStatus !== 'OPTIMAL' && r.estimatedSavings > 0)
+                .map(r => ({
+                    id: r.resourceId,
+                    name: r.name,
+                    region: r.region,
+                    finding: r.optimizationStatus === 'OVERSIZED' ? 'Oversized' : 'Undersized',
+                    savings: r.estimatedSavings || 0
+                }))
+                .sort((a, b) => b.savings - a.savings);
 
-                setRecommendations(recs);
-            }
+            setRecommendations(recs);
         } catch (e) {
-            console.error('Failed to fetch dashboard data:', e);
-            // Check if error is credential-related
-            if (e.response?.data?.error?.includes('credentials') || e.response?.data?.error?.includes('invalid')) {
-                await checkCloudConfigs();
-            }
+            console.error('[Dashboard] Failed to load from localStorage:', e);
         } finally {
             setLoading(false);
         }
+    };
+
+    const fetchResources = async (shouldSync = false) => {
+        setLoading(true);
+
+        if (shouldSync) {
+            setSyncProgress({ elapsed: 0, status: 'Initializing...' });
+
+            // Start timer
+            const startTime = Date.now();
+            const progressInterval = setInterval(() => {
+                const elapsed = Math.floor((Date.now() - startTime) / 1000);
+                const status = elapsed < 10 ? 'Connecting to cloud...' :
+                    elapsed < 20 ? 'Fetching instances...' :
+                        elapsed < 40 ? 'Collecting metrics...' :
+                            elapsed < 60 ? 'Running ML predictions...' :
+                                'Almost done...';
+                setSyncProgress({ elapsed, status });
+            }, 1000);
+
+            try {
+                console.log('[Dashboard] Calling /api/cloud/fetch...');
+                const syncRes = await api.post('/cloud/fetch', { userId });
+
+                clearInterval(progressInterval);
+
+                if (syncRes.data.success) {
+                    const resources = syncRes.data.resources || [];
+                    console.log('[Dashboard] Fetched', resources.length, 'resources from cloud');
+
+                    setSyncProgress({
+                        elapsed: Math.floor((Date.now() - startTime) / 1000),
+                        status: `Saving ${resources.length} resources...`
+                    });
+
+                    // Save to localStorage
+                    localStorageService.saveResources(resources);
+
+                    // Reload from localStorage
+                    loadResourcesFromLocalStorage();
+                } else {
+                    console.error('[Dashboard] Sync failed:', syncRes.data.error);
+                    // Check if error is credential-related
+                    if (syncRes.data.error?.includes('credentials') || syncRes.data.error?.includes('invalid')) {
+                        await checkCloudConfigs();
+                    }
+                }
+            } catch (e) {
+                clearInterval(progressInterval);
+                console.error('Failed to fetch dashboard data:', e);
+                // Check if error is credential-related
+                if (e.response?.data?.error?.includes('credentials') || e.response?.data?.error?.includes('invalid')) {
+                    await checkCloudConfigs();
+                }
+            } finally {
+                setSyncProgress({ elapsed: 0, status: '' });
+            }
+        } else {
+            // Just reload from localStorage
+            loadResourcesFromLocalStorage();
+        }
+
+        setLoading(false);
     };
 
     const handleDisconnect = async () => {
@@ -117,6 +192,10 @@ export default function CloudDashboard() {
             await api.delete('/cloud/config', { data: { userId, provider: 'AWS' } });
             await api.delete('/cloud/config', { data: { userId, provider: 'Azure' } });
             await api.delete('/cloud/config', { data: { userId, provider: 'GCP' } });
+
+            // Clear localStorage
+            localStorageService.clearResources();
+
             navigate('/cloud/connect');
         } catch { alert('Failed to disconnect. Please try again.'); }
     };
@@ -136,8 +215,70 @@ export default function CloudDashboard() {
     const TABS = ['instances', 'buckets'];
     const tableData = activeTab === 'instances' ? instances : buckets;
 
+    // Check if we're currently syncing (recently connected and have few/no resources)
+    const isSyncing = connectedProviders.length > 0 && resources.length < 5;
+    const [autoRefresh, setAutoRefresh] = useState(false); // Disabled by default for localStorage
+
+    // Note: Auto-refresh disabled for localStorage mode
+    // Users must manually click "Sync Resources" to fetch fresh data
+
     return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {/* Syncing Banner */}
+            {(isSyncing || syncProgress.elapsed > 0) && (
+                <div style={{ background: 'var(--az-blue-light)', border: '1px solid var(--az-blue)', borderRadius: 6, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <RefreshCw size={16} style={{ color: 'var(--az-blue)', animation: 'spin 2s linear infinite' }} />
+                    <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--az-blue)', marginBottom: 2 }}>
+                            {syncProgress.status || 'Syncing resources from all regions...'}
+                        </div>
+                        <div style={{ fontSize: 12, color: 'var(--az-text-2)' }}>
+                            {syncProgress.elapsed > 0 ? (
+                                <>
+                                    Time elapsed: <span style={{ fontWeight: 600 }}>{syncProgress.elapsed}s</span>
+                                    {syncProgress.elapsed < 60 && <span> / Estimated: 30-60s</span>}
+                                    {syncProgress.elapsed > 60 && <span style={{ color: 'var(--az-warning)' }}> - Taking longer than expected</span>}
+                                </>
+                            ) : (
+                                'This may take a few minutes. Resources will appear here as they\'re discovered.'
+                            )}
+                        </div>
+                        {syncProgress.elapsed > 0 && (
+                            <div style={{
+                                width: '100%',
+                                height: 4,
+                                background: '#E1DFDD',
+                                borderRadius: 2,
+                                overflow: 'hidden',
+                                marginTop: 8
+                            }}>
+                                <div style={{
+                                    height: '100%',
+                                    width: `${Math.min(100, (syncProgress.elapsed / 60) * 100)}%`,
+                                    background: 'var(--az-blue)',
+                                    transition: 'width 1s linear',
+                                    borderRadius: 2
+                                }} />
+                            </div>
+                        )}
+                    </div>
+                    <button
+                        onClick={() => setAutoRefresh(!autoRefresh)}
+                        style={{
+                            background: autoRefresh ? 'var(--az-blue)' : '#fff',
+                            color: autoRefresh ? '#fff' : 'var(--az-blue)',
+                            border: `1px solid var(--az-blue)`,
+                            borderRadius: 4,
+                            padding: '6px 12px',
+                            fontSize: 11,
+                            fontWeight: 600,
+                            cursor: 'pointer'
+                        }}
+                    >
+                        {autoRefresh ? 'Auto-refreshing' : 'Paused'}
+                    </button>
+                </div>
+            )}
             {/* Header row */}
             <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
                 <div>

@@ -35,7 +35,15 @@ const cloudConfigSchema = new mongoose.Schema({
         impact: String,
         required: Boolean
     }],
-    limitedAccess: { type: Boolean, default: false }
+    limitedAccess: { type: Boolean, default: false },
+    // NEW: Enhanced connection status fields
+    connection_status: {
+        type: String,
+        enum: ['full', 'partial', 'failed'],
+        default: 'full'
+    },
+    missing_permissions: [{ type: String }],
+    impact: [{ type: String }]
 }, {
     timestamps: true
 });

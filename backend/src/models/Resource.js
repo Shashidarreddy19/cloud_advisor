@@ -25,12 +25,23 @@ const cloudResourceSchema = new mongoose.Schema({
     diskReadBytes: Number,
     diskWriteBytes: Number,
 
+    // NEW: CPU + Memory Recommendation System Metrics
+    cpu_avg: { type: Number, default: null },
+    cpu_p95: { type: Number, default: null },
+    memory_avg: { type: Number, default: null },
+    memory_p95: { type: Number, default: null },
+
     // Metrics status indicator
     metrics_status: {
         type: String,
-        enum: ['complete', 'partial', 'missing'],
+        enum: ['complete', 'partial', 'missing', 'insufficient_data', 'instance_stopped'],
         default: 'missing'
     },
+
+    // NEW: Metrics metadata
+    running_hours_last_14d: { type: Number, default: 0 },
+    metrics_window_days: { type: Number, default: null },
+    state_checked_at: { type: Date, default: null },
 
     // Logic/Status
     optimizationStatus: {
@@ -38,22 +49,42 @@ const cloudResourceSchema = new mongoose.Schema({
         enum: ['UNDERUTILIZED', 'OVERUTILIZED', 'OPTIMAL', 'INSUFFICIENT_DATA', 'undersized', 'oversized', 'optimal', 'insufficient_data', 'UNDERSIZED', 'OVERSIZED', 'Unknown'],
         default: 'OPTIMAL'
     },
-    recommendation: String, // "Upsize to...", "Downsize to..."
+    recommendation: {
+        type: String,
+        enum: ['OVERSIZED', 'UNDERSIZED', 'OPTIMAL', null],
+        default: null
+    },
+    confidence: { type: Number, default: null },
+    recommendation_warnings: [{ type: String }],
 
     // Financials
     estimatedMonthlyCost: Number,
     estimatedSavings: Number,
 
+    // NEW: Memory metrics source tracking
+    memory_metrics_source: {
+        type: String,
+        enum: ['available', 'agent_required', 'unavailable'],
+        default: 'unavailable'
+    },
+    missing_metrics: [{ type: String }],
+
     // NEW: Pricing transparency fields
     price_source: {
         type: String,
-        enum: ['live', 'cached', 'db', 'estimated'],
+        enum: ['live', 'cached', 'db', 'estimated', 'unavailable'],
         default: 'cached'
     },
+    fallback_reason: String,
     price_last_updated: { type: Date, default: Date.now },
 
     // NEW: ML prediction confidence (0-1 or 0-100)
     prediction_confidence: { type: Number, default: 0 },
+    confidence_flag: {
+        type: String,
+        enum: ['insufficient', 'low', null],
+        default: null
+    },
 
     // NEW: Recommended instance details
     recommendedType: String, // e.g., 't3.medium'

@@ -95,10 +95,14 @@ export default function ModeSelection() {
                 <div className="max-w-7xl mx-auto px-6 md:px-12 h-16 flex items-center justify-between">
                     {/* Logo */}
                     <div className="flex items-center gap-2 cursor-pointer" onClick={() => navigate('/')}>
-                        <div className="w-8 h-8 bg-cyan-500 rounded-lg flex items-center justify-center">
-                            <Cloud size={20} className="text-white" />
-                        </div>
-                        <span className="text-xl font-black text-gray-900">CloudOptimizer</span>
+                        <img
+                            src="/logo.png"
+                            alt="Cloud Optimizer"
+                            style={{
+                                height: '40px',
+                                width: 'auto'
+                            }}
+                        />
                     </div>
 
                     {/* Nav Links - Center */}
@@ -584,10 +588,14 @@ export default function ModeSelection() {
 
                     <div className="border-t border-gray-800 pt-8 flex flex-col md:flex-row justify-between items-center gap-4">
                         <div className="flex items-center gap-2">
-                            <div className="w-8 h-8 bg-cyan-500 rounded-lg flex items-center justify-center">
-                                <Cloud size={18} className="text-white" />
-                            </div>
-                            <span className="text-white font-black text-lg">CloudOptimizer</span>
+                            <img
+                                src="/logo.png"
+                                alt="Cloud Optimizer"
+                                style={{
+                                    height: '35px',
+                                    width: 'auto'
+                                }}
+                            />
                         </div>
 
                         <p className="text-sm">

@@ -150,29 +150,25 @@ export default function Settings() {
     ];
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div className="flex flex-col gap-4">
             {/* Header */}
             <div>
-                <h1 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: 'var(--az-text)' }}>Settings</h1>
-                <p style={{ margin: '4px 0 0 0', fontSize: 13, color: 'var(--az-text-2)' }}>
+                <h1 className="m-0 text-xl font-semibold text-gray-900">Settings</h1>
+                <p className="mt-1 text-sm text-gray-600">
                     Manage your account settings and preferences
                 </p>
             </div>
 
             {/* Tabs */}
-            <div style={{ display: 'flex', gap: 8, borderBottom: '1px solid var(--az-border)', overflowX: 'auto' }}>
+            <div className="flex gap-2 border-b border-gray-200 overflow-x-auto">
                 {tabs.map(({ id, label, icon: Icon }) => (
                     <button
                         key={id}
                         onClick={() => setActiveTab(id)}
-                        style={{
-                            display: 'flex', alignItems: 'center', gap: 6,
-                            padding: '10px 16px', border: 'none', background: 'transparent',
-                            borderBottom: `2px solid ${activeTab === id ? 'var(--az-blue)' : 'transparent'}`,
-                            color: activeTab === id ? 'var(--az-blue)' : 'var(--az-text-2)',
-                            fontSize: 13, fontWeight: activeTab === id ? 600 : 400,
-                            cursor: 'pointer', transition: 'all 0.12s', marginBottom: -1,
-                        }}
+                        className={`flex items-center gap-1.5 px-4 py-2.5 border-b-2 transition-all ${activeTab === id
+                            ? 'border-teal-500 text-teal-600 font-semibold'
+                            : 'border-transparent text-gray-600 font-normal hover:text-teal-500'
+                            }`}
                     >
                         <Icon size={14} />
                         {label}
@@ -181,74 +177,70 @@ export default function Settings() {
             </div>
 
             {/* Content */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 16 }}>
+            <div className="grid grid-cols-1 gap-4">
 
                 {/* Profile Tab */}
                 {activeTab === 'profile' && (
-                    <div style={{ background: '#fff', border: '1px solid var(--az-border)', borderRadius: 6, padding: 24 }}>
-                        <h2 style={{ margin: '0 0 16px 0', fontSize: 16, fontWeight: 600, color: 'var(--az-text)' }}>
+                    <div className="bg-white border border-gray-200 rounded-lg p-6">
+                        <h2 className="m-0 mb-4 text-base font-semibold text-gray-900">
                             Profile Information
                         </h2>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        <div className="flex flex-col gap-4">
                             <div>
-                                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--az-text)', marginBottom: 6 }}>
+                                <label className="block text-sm font-semibold text-gray-900 mb-1.5">
                                     Username
                                 </label>
-                                <div style={{ position: 'relative' }}>
-                                    <User size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--az-text-3)' }} />
+                                <div className="relative">
+                                    <User size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
                                     <input
                                         type="text"
                                         value={profileData.username}
                                         onChange={e => setProfileData({ ...profileData, username: e.target.value })}
-                                        className="az-input"
-                                        style={{ width: '100%', paddingLeft: 32 }}
+                                        className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                                     />
                                 </div>
                             </div>
 
                             <div>
-                                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--az-text)', marginBottom: 6 }}>
+                                <label className="block text-sm font-semibold text-gray-900 mb-1.5">
                                     Email Address
                                 </label>
-                                <div style={{ position: 'relative' }}>
-                                    <Mail size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--az-text-3)' }} />
+                                <div className="relative">
+                                    <Mail size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
                                     <input
                                         type="email"
                                         value={profileData.email}
                                         onChange={e => setProfileData({ ...profileData, email: e.target.value })}
-                                        className="az-input"
-                                        style={{ width: '100%', paddingLeft: 32 }}
+                                        className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                                         placeholder="your.email@example.com"
                                     />
                                 </div>
                             </div>
 
                             <div>
-                                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--az-text)', marginBottom: 6 }}>
+                                <label className="block text-sm font-semibold text-gray-900 mb-1.5">
                                     Organization
                                 </label>
-                                <div style={{ position: 'relative' }}>
-                                    <Building size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--az-text-3)' }} />
+                                <div className="relative">
+                                    <Building size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
                                     <input
                                         type="text"
                                         value={profileData.organization}
                                         onChange={e => setProfileData({ ...profileData, organization: e.target.value })}
-                                        className="az-input"
-                                        style={{ width: '100%', paddingLeft: 32 }}
+                                        className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                                         placeholder="Company name"
                                     />
                                 </div>
                             </div>
 
                             <div>
-                                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--az-text)', marginBottom: 6 }}>
+                                <label className="block text-sm font-semibold text-gray-900 mb-1.5">
                                     Role
                                 </label>
                                 <select
                                     value={profileData.role}
                                     onChange={e => setProfileData({ ...profileData, role: e.target.value })}
-                                    className="az-select"
-                                    style={{ width: '100%' }}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                                 >
                                     <option>Cloud Engineer</option>
                                     <option>DevOps Engineer</option>
@@ -262,8 +254,7 @@ export default function Settings() {
                             <button
                                 onClick={handleProfileUpdate}
                                 disabled={loading}
-                                className="az-btn az-btn-primary"
-                                style={{ alignSelf: 'flex-start' }}
+                                className="self-start flex items-center gap-2 px-4 py-2 bg-teal-500 text-white rounded-md text-sm font-semibold hover:bg-teal-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                             >
                                 <Save size={14} />
                                 {loading ? 'Saving...' : 'Save Changes'}
@@ -274,71 +265,68 @@ export default function Settings() {
 
                 {/* Security Tab */}
                 {activeTab === 'security' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    <div className="flex flex-col gap-4">
                         {/* Change Password */}
-                        <div style={{ background: '#fff', border: '1px solid var(--az-border)', borderRadius: 6, padding: 24 }}>
-                            <h2 style={{ margin: '0 0 16px 0', fontSize: 16, fontWeight: 600, color: 'var(--az-text)' }}>
+                        <div className="bg-white border border-gray-200 rounded-lg p-6">
+                            <h2 className="m-0 mb-4 text-base font-semibold text-gray-900">
                                 Change Password
                             </h2>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                            <div className="flex flex-col gap-4">
                                 <div>
-                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--az-text)', marginBottom: 6 }}>
+                                    <label className="block text-sm font-semibold text-gray-900 mb-1.5">
                                         Current Password
                                     </label>
-                                    <div style={{ position: 'relative' }}>
-                                        <Lock size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--az-text-3)' }} />
+                                    <div className="relative">
+                                        <Lock size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
                                         <input
                                             type={showCurrentPassword ? 'text' : 'password'}
                                             value={passwordData.currentPassword}
                                             onChange={e => setPasswordData({ ...passwordData, currentPassword: e.target.value })}
-                                            className="az-input"
-                                            style={{ width: '100%', paddingLeft: 32, paddingRight: 36 }}
+                                            className="w-full pl-8 pr-9 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                                         />
                                         <button
                                             type="button"
                                             onClick={() => setShowCurrentPassword(!showCurrentPassword)}
-                                            style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 bg-transparent border-none cursor-pointer p-0"
                                         >
-                                            {showCurrentPassword ? <EyeOff size={14} style={{ color: 'var(--az-text-3)' }} /> : <Eye size={14} style={{ color: 'var(--az-text-3)' }} />}
+                                            {showCurrentPassword ? <EyeOff size={14} className="text-gray-400" /> : <Eye size={14} className="text-gray-400" />}
                                         </button>
                                     </div>
                                 </div>
 
                                 <div>
-                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--az-text)', marginBottom: 6 }}>
+                                    <label className="block text-sm font-semibold text-gray-900 mb-1.5">
                                         New Password
                                     </label>
-                                    <div style={{ position: 'relative' }}>
-                                        <Lock size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--az-text-3)' }} />
+                                    <div className="relative">
+                                        <Lock size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
                                         <input
                                             type={showNewPassword ? 'text' : 'password'}
                                             value={passwordData.newPassword}
                                             onChange={e => setPasswordData({ ...passwordData, newPassword: e.target.value })}
-                                            className="az-input"
-                                            style={{ width: '100%', paddingLeft: 32, paddingRight: 36 }}
+                                            className="w-full pl-8 pr-9 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                                         />
                                         <button
                                             type="button"
                                             onClick={() => setShowNewPassword(!showNewPassword)}
-                                            style={{ position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                                            className="absolute right-2.5 top-1/2 -translate-y-1/2 bg-transparent border-none cursor-pointer p-0"
                                         >
-                                            {showNewPassword ? <EyeOff size={14} style={{ color: 'var(--az-text-3)' }} /> : <Eye size={14} style={{ color: 'var(--az-text-3)' }} />}
+                                            {showNewPassword ? <EyeOff size={14} className="text-gray-400" /> : <Eye size={14} className="text-gray-400" />}
                                         </button>
                                     </div>
                                 </div>
 
                                 <div>
-                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--az-text)', marginBottom: 6 }}>
+                                    <label className="block text-sm font-semibold text-gray-900 mb-1.5">
                                         Confirm New Password
                                     </label>
-                                    <div style={{ position: 'relative' }}>
-                                        <Lock size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--az-text-3)' }} />
+                                    <div className="relative">
+                                        <Lock size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
                                         <input
                                             type="password"
                                             value={passwordData.confirmPassword}
                                             onChange={e => setPasswordData({ ...passwordData, confirmPassword: e.target.value })}
-                                            className="az-input"
-                                            style={{ width: '100%', paddingLeft: 32 }}
+                                            className="w-full pl-8 pr-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                                         />
                                     </div>
                                 </div>
@@ -346,8 +334,7 @@ export default function Settings() {
                                 <button
                                     onClick={handlePasswordChange}
                                     disabled={loading || !passwordData.currentPassword || !passwordData.newPassword}
-                                    className="az-btn az-btn-primary"
-                                    style={{ alignSelf: 'flex-start' }}
+                                    className="self-start flex items-center gap-2 px-4 py-2 bg-teal-500 text-white rounded-md text-sm font-semibold hover:bg-teal-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                                 >
                                     <Key size={14} />
                                     {loading ? 'Changing...' : 'Change Password'}
@@ -356,18 +343,18 @@ export default function Settings() {
                         </div>
 
                         {/* Security Info */}
-                        <div style={{ background: '#fff', border: '1px solid var(--az-border)', borderRadius: 6, padding: 24 }}>
-                            <h2 style={{ margin: '0 0 16px 0', fontSize: 16, fontWeight: 600, color: 'var(--az-text)' }}>
+                        <div className="bg-white border border-gray-200 rounded-lg p-6">
+                            <h2 className="m-0 mb-4 text-base font-semibold text-gray-900">
                                 Security Information
                             </h2>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 12, background: 'var(--az-success-bg)', borderRadius: 4 }}>
-                                    <CheckCircle2 size={16} style={{ color: 'var(--az-success)' }} />
-                                    <span style={{ fontSize: 13, color: 'var(--az-success)' }}>Your account is secure</span>
+                            <div className="flex flex-col gap-3">
+                                <div className="flex items-center gap-2 p-3 bg-green-50 rounded">
+                                    <CheckCircle2 size={16} className="text-green-600" />
+                                    <span className="text-sm text-green-700">Your account is secure</span>
                                 </div>
-                                <div style={{ fontSize: 13, color: 'var(--az-text-2)', lineHeight: 1.6 }}>
-                                    <p style={{ margin: '0 0 8px 0' }}>Last login: {new Date().toLocaleString()}</p>
-                                    <p style={{ margin: 0 }}>We recommend changing your password every 90 days.</p>
+                                <div className="text-sm text-gray-600 leading-relaxed">
+                                    <p className="mb-2">Last login: {new Date().toLocaleString()}</p>
+                                    <p className="m-0">We recommend changing your password every 90 days.</p>
                                 </div>
                             </div>
                         </div>
@@ -376,27 +363,27 @@ export default function Settings() {
 
                 {/* Notifications Tab */}
                 {activeTab === 'notifications' && (
-                    <div style={{ background: '#fff', border: '1px solid var(--az-border)', borderRadius: 6, padding: 24 }}>
-                        <h2 style={{ margin: '0 0 16px 0', fontSize: 16, fontWeight: 600, color: 'var(--az-text)' }}>
+                    <div className="bg-white border border-gray-200 rounded-lg p-6">
+                        <h2 className="m-0 mb-4 text-base font-semibold text-gray-900">
                             Notification Preferences
                         </h2>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        <div className="flex flex-col gap-4">
                             {[
                                 { key: 'emailNotifications', label: 'Email Notifications', desc: 'Receive email updates about your account' },
                                 { key: 'weeklyReports', label: 'Weekly Reports', desc: 'Get weekly summary of your cloud optimization' },
                                 { key: 'savingsAlerts', label: 'Savings Alerts', desc: 'Notify when new cost-saving opportunities are found' },
                                 { key: 'securityAlerts', label: 'Security Alerts', desc: 'Important security and account notifications' },
                             ].map(({ key, label, desc }) => (
-                                <div key={key} style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: 12, background: 'var(--az-bg)', borderRadius: 4 }}>
+                                <div key={key} className="flex items-start gap-3 p-3 bg-gray-50 rounded">
                                     <input
                                         type="checkbox"
                                         checked={notificationSettings[key]}
                                         onChange={e => setNotificationSettings({ ...notificationSettings, [key]: e.target.checked })}
-                                        style={{ marginTop: 2, accentColor: 'var(--az-blue)' }}
+                                        className="mt-0.5 accent-teal-500"
                                     />
-                                    <div style={{ flex: 1 }}>
-                                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--az-text)', marginBottom: 2 }}>{label}</div>
-                                        <div style={{ fontSize: 12, color: 'var(--az-text-2)' }}>{desc}</div>
+                                    <div className="flex-1">
+                                        <div className="text-sm font-semibold text-gray-900 mb-0.5">{label}</div>
+                                        <div className="text-xs text-gray-600">{desc}</div>
                                     </div>
                                 </div>
                             ))}
@@ -404,8 +391,7 @@ export default function Settings() {
                             <button
                                 onClick={handleNotificationUpdate}
                                 disabled={loading}
-                                className="az-btn az-btn-primary"
-                                style={{ alignSelf: 'flex-start' }}
+                                className="self-start flex items-center gap-2 px-4 py-2 bg-teal-500 text-white rounded-md text-sm font-semibold hover:bg-teal-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                             >
                                 <Save size={14} />
                                 {loading ? 'Saving...' : 'Save Preferences'}
@@ -416,20 +402,19 @@ export default function Settings() {
 
                 {/* Preferences Tab */}
                 {activeTab === 'preferences' && (
-                    <div style={{ background: '#fff', border: '1px solid var(--az-border)', borderRadius: 6, padding: 24 }}>
-                        <h2 style={{ margin: '0 0 16px 0', fontSize: 16, fontWeight: 600, color: 'var(--az-text)' }}>
+                    <div className="bg-white border border-gray-200 rounded-lg p-6">
+                        <h2 className="m-0 mb-4 text-base font-semibold text-gray-900">
                             Application Preferences
                         </h2>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        <div className="flex flex-col gap-4">
                             <div>
-                                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--az-text)', marginBottom: 6 }}>
+                                <label className="block text-sm font-semibold text-gray-900 mb-1.5">
                                     Currency
                                 </label>
                                 <select
                                     value={preferences.currency}
                                     onChange={e => setPreferences({ ...preferences, currency: e.target.value })}
-                                    className="az-select"
-                                    style={{ width: '100%' }}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                                 >
                                     <option value="USD">USD ($)</option>
                                     <option value="EUR">EUR (€)</option>
@@ -440,14 +425,13 @@ export default function Settings() {
                             </div>
 
                             <div>
-                                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--az-text)', marginBottom: 6 }}>
+                                <label className="block text-sm font-semibold text-gray-900 mb-1.5">
                                     Date Format
                                 </label>
                                 <select
                                     value={preferences.dateFormat}
                                     onChange={e => setPreferences({ ...preferences, dateFormat: e.target.value })}
-                                    className="az-select"
-                                    style={{ width: '100%' }}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                                 >
                                     <option value="MM/DD/YYYY">MM/DD/YYYY</option>
                                     <option value="DD/MM/YYYY">DD/MM/YYYY</option>
@@ -456,14 +440,13 @@ export default function Settings() {
                             </div>
 
                             <div>
-                                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--az-text)', marginBottom: 6 }}>
+                                <label className="block text-sm font-semibold text-gray-900 mb-1.5">
                                     Theme
                                 </label>
                                 <select
                                     value={preferences.theme}
                                     onChange={e => setPreferences({ ...preferences, theme: e.target.value })}
-                                    className="az-select"
-                                    style={{ width: '100%' }}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                                 >
                                     <option value="light">Light</option>
                                     <option value="dark">Dark</option>
@@ -472,14 +455,13 @@ export default function Settings() {
                             </div>
 
                             <div>
-                                <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'var(--az-text)', marginBottom: 6 }}>
+                                <label className="block text-sm font-semibold text-gray-900 mb-1.5">
                                     Language
                                 </label>
                                 <select
                                     value={preferences.language}
                                     onChange={e => setPreferences({ ...preferences, language: e.target.value })}
-                                    className="az-select"
-                                    style={{ width: '100%' }}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                                 >
                                     <option value="en">English</option>
                                     <option value="es">Español</option>
@@ -492,8 +474,7 @@ export default function Settings() {
                             <button
                                 onClick={handlePreferencesUpdate}
                                 disabled={loading}
-                                className="az-btn az-btn-primary"
-                                style={{ alignSelf: 'flex-start' }}
+                                className="self-start flex items-center gap-2 px-4 py-2 bg-teal-500 text-white rounded-md text-sm font-semibold hover:bg-teal-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                             >
                                 <Save size={14} />
                                 {loading ? 'Saving...' : 'Save Preferences'}
@@ -504,42 +485,35 @@ export default function Settings() {
 
                 {/* Data & Privacy Tab */}
                 {activeTab === 'data' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    <div className="flex flex-col gap-4">
                         {/* Export Data */}
-                        <div style={{ background: '#fff', border: '1px solid var(--az-border)', borderRadius: 6, padding: 24 }}>
-                            <h2 style={{ margin: '0 0 16px 0', fontSize: 16, fontWeight: 600, color: 'var(--az-text)' }}>
+                        <div className="bg-white border border-gray-200 rounded-lg p-6">
+                            <h2 className="m-0 mb-4 text-base font-semibold text-gray-900">
                                 Export Your Data
                             </h2>
-                            <p style={{ margin: '0 0 16px 0', fontSize: 13, color: 'var(--az-text-2)' }}>
+                            <p className="m-0 mb-4 text-sm text-gray-600">
                                 Download a copy of your data including cloud connections, reports, and analysis history.
                             </p>
-                            <button className="az-btn az-btn-secondary">
+                            <button className="flex items-center gap-2 px-4 py-2 bg-gray-100 text-gray-700 border border-gray-300 rounded-md text-sm font-semibold hover:bg-gray-200 transition-colors">
                                 <Database size={14} />
                                 Export Data
                             </button>
                         </div>
 
                         {/* Delete Account */}
-                        <div style={{ background: '#fff', border: '1px solid var(--az-error)', borderRadius: 6, padding: 24 }}>
-                            <h2 style={{ margin: '0 0 16px 0', fontSize: 16, fontWeight: 600, color: 'var(--az-error)' }}>
+                        <div className="bg-white border border-red-500 rounded-lg p-6">
+                            <h2 className="m-0 mb-4 text-base font-semibold text-red-600">
                                 Delete Account
                             </h2>
-                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: 12, background: 'var(--az-error-bg)', borderRadius: 4, marginBottom: 16 }}>
-                                <AlertCircle size={16} style={{ color: 'var(--az-error)', marginTop: 2, flexShrink: 0 }} />
-                                <div style={{ fontSize: 13, color: 'var(--az-error)' }}>
+                            <div className="flex items-start gap-3 p-3 bg-red-50 rounded mb-4">
+                                <AlertCircle size={16} className="text-red-600 mt-0.5 flex-shrink-0" />
+                                <div className="text-sm text-red-700">
                                     <strong>Warning:</strong> This action cannot be undone. All your data, cloud connections, and reports will be permanently deleted.
                                 </div>
                             </div>
                             <button
                                 onClick={handleDeleteAccount}
-                                style={{
-                                    display: 'flex', alignItems: 'center', gap: 6,
-                                    padding: '8px 16px', borderRadius: 4, border: '1px solid var(--az-error)',
-                                    background: 'var(--az-error)', color: '#fff', fontSize: 13, fontWeight: 600,
-                                    cursor: 'pointer', transition: 'all 0.12s',
-                                }}
-                                onMouseEnter={e => (e.currentTarget.style.background = '#C42B1C')}
-                                onMouseLeave={e => (e.currentTarget.style.background = 'var(--az-error)')}
+                                className="flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-md text-sm font-semibold hover:bg-red-700 transition-colors"
                             >
                                 <Trash2 size={14} />
                                 Delete My Account

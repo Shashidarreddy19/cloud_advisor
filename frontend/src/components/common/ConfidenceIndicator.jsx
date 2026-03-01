@@ -1,29 +1,40 @@
 import React from 'react';
 import { AlertCircle, CheckCircle2, Info } from 'lucide-react';
+import Badge from './Badge';
 
+/**
+ * ConfidenceIndicator Component
+ * 
+ * Displays confidence score as percentage with color coding and optional warning.
+ * Requirements 10.1, 10.2, 10.3, 10.4, 14.7
+ */
 export default function ConfidenceIndicator({ confidence, showLabel = true, size = 'md' }) {
+    // Requirement 10.3: Do not display if confidence < 0.50
+    if (confidence === null || confidence === undefined || confidence < 0.50) {
+        return null;
+    }
+
     const conf = parseFloat(confidence) || 0;
 
-    let level, color, bg, icon, label;
+    let level, color, bg, icon, label, showWarning = false;
 
-    if (conf >= 0.8) {
+    // Requirement 10.1: High confidence (≥ 0.75) - no warnings
+    if (conf >= 0.75) {
         level = 'high';
         color = 'var(--az-success)';
         bg = 'var(--az-success-bg)';
         icon = CheckCircle2;
         label = 'High Confidence';
-    } else if (conf >= 0.5) {
+        showWarning = false;
+    }
+    // Requirement 10.2: Medium confidence (≥ 0.50 and < 0.75) - show "Low confidence" warning
+    else if (conf >= 0.50) {
         level = 'medium';
-        color = 'var(--az-blue)';
-        bg = 'var(--az-blue-light)';
-        icon = Info;
-        label = 'Medium Confidence';
-    } else {
-        level = 'low';
         color = '#8A3707';
         bg = 'var(--az-warning-bg)';
         icon = AlertCircle;
-        label = 'Low Confidence';
+        label = 'Medium Confidence';
+        showWarning = true;
     }
 
     const Icon = icon;
@@ -38,7 +49,7 @@ export default function ConfidenceIndicator({ confidence, showLabel = true, size
     const { fontSize, iconSize, barHeight } = sizeStyles[size] || sizeStyles.md;
 
     return (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             {showLabel && (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                     <Icon size={iconSize} style={{ color }} />
@@ -71,6 +82,12 @@ export default function ConfidenceIndicator({ confidence, showLabel = true, size
                     {percentage}%
                 </span>
             </div>
+            {/* Requirement 10.2: Show "Low confidence" warning for medium confidence */}
+            {showWarning && (
+                <Badge color="warning" size="small">
+                    Low confidence
+                </Badge>
+            )}
         </div>
     );
 }

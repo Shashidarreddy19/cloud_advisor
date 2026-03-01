@@ -5,9 +5,9 @@ const { STSClient, GetCallerIdentityCommand } = require("@aws-sdk/client-sts");
 const Resource = require('../models/Resource');
 const logger = require('../utils/logger');
 const { normalizeVM } = require('./normalizationService');
-const { enrichVMBatch } = require('./enrichmentService');
+const { enrichVMBatch, trackUnresolvableInstance } = require('./enrichmentService');
 const { processVMsInBatches } = require('./mlService');
-const { handleCloudError } = require('./credentialValidationService');
+const { validateVMBatch, markVMWithError } = require('../utils/dataValidator');
 
 /**
  * Detect OS from AWS EC2 instance
@@ -116,6 +116,7 @@ const detectAWSOS = async (ec2Client, instance) => {
 /**
  * Fetch real instance type specifications from AWS API
  * Returns actual vCPU and memory from AWS, not from lookup table
+ * ENHANCED: Detects burstable instances (T-series), tracks architecture, logs unknown types
  */
 const getEc2SpecsFromAWS = async (ec2Client, instanceType) => {
     try {
@@ -131,20 +132,44 @@ const getEc2SpecsFromAWS = async (ec2Client, instanceType) => {
             const memoryMiB = instanceTypeInfo.MemoryInfo?.SizeInMiB || null;
             const memoryGb = memoryMiB ? memoryMiB / 1024 : null; // NO ROUNDING - exact value
 
-            logger.info(`[AWS Specs] ${instanceType}: ${vCpu} vCPU, ${memoryGb} GB RAM (from AWS API)`);
+            // Detect burstable instances (T-series)
+            const burstable = instanceType.startsWith('t2.') ||
+                instanceType.startsWith('t3.') ||
+                instanceType.startsWith('t3a.') ||
+                instanceType.startsWith('t4g.');
+
+            // Detect architecture
+            const processorInfo = instanceTypeInfo.ProcessorInfo;
+            const architecture = processorInfo?.SupportedArchitectures?.[0] || 'x86_64';
+
+            // Detect GPU
+            const gpu = instanceTypeInfo.GpuInfo?.Gpus?.length > 0;
+
+            logger.info(`[AWS Specs] ${instanceType}: ${vCpu} vCPU, ${memoryGb} GB RAM, arch=${architecture}, burstable=${burstable}, gpu=${gpu} (from AWS API)`);
 
             return {
                 vCpu: vCpu,
-                memoryGb: memoryGb
+                memoryGb: memoryGb,
+                architecture: architecture,
+                burstable: burstable,
+                gpu: gpu
             };
         }
 
-        logger.warn(`[AWS Specs] No data returned for ${instanceType}, using fallback`);
-        return getEc2Specs(instanceType); // Fallback to lookup table
+        logger.warn(`[AWS Specs] No data returned for ${instanceType}, marking as unresolvable`);
+
+        // Track unknown instance type in database for future updates
+        await trackUnresolvableInstance('aws', instanceType, 'unknown');
+
+        return { vCpu: null, memoryGb: null, architecture: null, burstable: false, gpu: false };
 
     } catch (error) {
         logger.error(`[AWS Specs] Failed to fetch specs for ${instanceType}: ${error.message}`);
-        return getEc2Specs(instanceType); // Fallback to lookup table
+
+        // Track unknown instance type in database
+        await trackUnresolvableInstance('aws', instanceType, 'unknown');
+
+        return { vCpu: null, memoryGb: null, architecture: null, burstable: false, gpu: false };
     }
 };
 
@@ -158,17 +183,65 @@ const getEc2Specs = (type) => {
 /**
  * Fetch CloudWatch metrics for an EC2 instance
  * Returns average and p95 CPU and memory utilization
- * FIXED: Proper null handling, 14-day window, no estimates
+ * ENHANCED: Agent detection, 14-day window, running hours calculation, missing metrics tracking
  */
-const fetchCloudWatchMetrics = async (cloudWatchClient, instanceId, region) => {
+/**
+ * Fetch CloudWatch metrics for an EC2 instance
+ * Returns average and p95 CPU and memory utilization
+ * ENHANCED: State-aware fetching, agent detection, time window validation, running hours calculation
+ *
+ * @param {Object} cloudWatchClient - AWS CloudWatch client
+ * @param {string} instanceId - EC2 instance ID
+ * @param {string} region - AWS region
+ * @param {string} state - Instance state (running, stopped, terminated, etc.)
+ * @returns {Object} Normalized metrics with status indicators
+ */
+const fetchCloudWatchMetrics = async (cloudWatchClient, instanceId, region, state = 'unknown') => {
+    const METRICS_WINDOW_DAYS = parseInt(process.env.METRICS_WINDOW_DAYS) || 30;
+
+    // CRITICAL: Determine instance state FIRST before fetching metrics
+    // Requirement 1.1: State Detection Precedes Metrics Collection
+    logger.info(`[Metrics] Instance ${instanceId} state: ${state}`);
+
+    // CRITICAL: Return early with null metrics if instance is not running
+    // Requirement 1.2: Stopped Instances Return Null Metrics
+    if (state !== 'running') {
+        logger.info(`[Metrics] Skipping metrics for ${instanceId} - instance is ${state} (not running)`);
+        return {
+            cpu_avg: null,
+            cpu_p95: null,
+            memory_avg: null,
+            memory_p95: null,
+            cpu_credit_balance: null,
+            network_in_bytes: 0,
+            network_out_bytes: 0,
+            disk_read_iops: 0,
+            disk_write_iops: 0,
+            metrics_status: 'instance_stopped',
+            memory_metrics_source: 'unavailable',
+            missing_metrics: [],
+            running_hours_last_14d: 0,
+            metrics_window_days: METRICS_WINDOW_DAYS,
+            state: state,
+            state_checked_at: new Date().toISOString()
+        };
+    }
+
+    // Instance is running - proceed with metrics collection
     const endTime = new Date();
-    const startTime = new Date(endTime.getTime() - 14 * 24 * 60 * 60 * 1000); // Last 14 days (not 7)
+    const startTime = new Date(endTime.getTime() - METRICS_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+
+    logger.info(`[Metrics] Fetching CloudWatch metrics for ${instanceId} (${METRICS_WINDOW_DAYS}-day window)`);
 
     let metrics_status = 'missing';
+    let memory_metrics_source = 'unavailable';
+    let missing_metrics = [];
     let cpu_avg = null;
     let cpu_p95 = null;
     let memory_avg = null;
     let memory_p95 = null;
+    let cpu_credit_balance = null;
+    let running_hours_last_14d = 0;
 
     try {
         // CPU Utilization - CRITICAL: Must fetch from AWS/EC2
@@ -194,12 +267,41 @@ const fetchCloudWatchMetrics = async (cloudWatchClient, instanceId, region) => {
             const p95Index = Math.floor(cpuValues.length * 0.95);
             cpu_p95 = cpuValues[p95Index] || cpu_avg * 1.2;
 
+            // Calculate running hours from number of datapoints (each datapoint = 1 hour)
+            running_hours_last_14d = cpuDatapoints.length;
+
             metrics_status = 'partial'; // CPU present, memory unknown
 
-            logger.info(`CloudWatch CPU metrics for ${instanceId}: avg=${cpu_avg.toFixed(2)}%, p95=${cpu_p95.toFixed(2)}%`);
+            logger.info(`CloudWatch CPU metrics for ${instanceId}: avg=${cpu_avg.toFixed(2)}%, p95=${cpu_p95.toFixed(2)}%, running_hours=${running_hours_last_14d}`);
         } else {
             logger.warn(`No CloudWatch CPU datapoints for ${instanceId} - instance may be newly launched or metrics not yet available`);
-            // Keep cpu_avg and cpu_p95 as null
+            missing_metrics.push('cpu_avg', 'cpu_p95');
+        }
+
+        // CPU Credit Balance (for burstable instances like T-series)
+        try {
+            const creditCommand = new GetMetricStatisticsCommand({
+                Namespace: 'AWS/EC2',
+                MetricName: 'CPUCreditBalance',
+                Dimensions: [{ Name: 'InstanceId', Value: instanceId }],
+                StartTime: startTime,
+                EndTime: endTime,
+                Period: 3600,
+                Statistics: ['Average']
+            });
+
+            const creditData = await cloudWatchClient.send(creditCommand);
+            const creditDatapoints = creditData.Datapoints || [];
+
+            if (creditDatapoints.length > 0) {
+                // Get the most recent credit balance
+                const sortedCredits = creditDatapoints.sort((a, b) => b.Timestamp - a.Timestamp);
+                cpu_credit_balance = sortedCredits[0].Average;
+                logger.info(`CPU credit balance for ${instanceId}: ${cpu_credit_balance.toFixed(2)}`);
+            }
+        } catch (creditError) {
+            // Credit balance not available - this is normal for non-burstable instances
+            logger.debug(`CPU credit balance not available for ${instanceId} (expected for non-T-series instances)`);
         }
 
         // Memory metrics (optional - requires CloudWatch agent)
@@ -225,6 +327,8 @@ const fetchCloudWatchMetrics = async (cloudWatchClient, instanceId, region) => {
                 const p95Index = Math.floor(memValues.length * 0.95);
                 memory_p95 = memValues[p95Index] || memory_avg * 1.2;
 
+                memory_metrics_source = 'available';
+
                 if (cpu_avg !== null) {
                     metrics_status = 'complete'; // Both CPU and memory present
                 }
@@ -232,12 +336,14 @@ const fetchCloudWatchMetrics = async (cloudWatchClient, instanceId, region) => {
                 logger.info(`CloudWatch memory metrics for ${instanceId}: avg=${memory_avg.toFixed(2)}%, p95=${memory_p95.toFixed(2)}%`);
             } else {
                 logger.info(`No memory metrics for ${instanceId} - CloudWatch agent not installed (this is normal)`);
-                // Keep memory_avg and memory_p95 as null - this is expected
+                memory_metrics_source = 'agent_required';
+                missing_metrics.push('memory_avg', 'memory_p95');
             }
         } catch (memError) {
             // Memory metrics not available - this is EXPECTED and NORMAL
             logger.info(`Memory metrics not available for ${instanceId} - CloudWatch agent not installed (expected)`);
-            // Keep memory as null - DO NOT estimate, DO NOT set to 0
+            memory_metrics_source = 'agent_required';
+            missing_metrics.push('memory_avg', 'memory_p95');
         }
 
         // Network metrics
@@ -277,17 +383,45 @@ const fetchCloudWatchMetrics = async (cloudWatchClient, instanceId, region) => {
             ? networkOutDatapoints.reduce((sum, dp) => sum + (dp.Average || 0), 0) / networkOutDatapoints.length
             : 0;
 
+        // CRITICAL: Check if uptime is sufficient for the metrics window
+        // Calculate uptime in days
+        const uptime_days = running_hours_last_14d / 24;
+
+        // Requirement 1.1-1.4: Dynamic time window calculation based on uptime
+        let metrics_window_days;
+        if (uptime_days >= 30) {
+            metrics_window_days = 30;
+        } else if (uptime_days >= 14) {
+            metrics_window_days = 14;
+        } else if (uptime_days >= 7) {
+            metrics_window_days = 7;
+        } else {
+            // Requirement 1.4: Mark as INSUFFICIENT_DATA if uptime < 7 days
+            metrics_status = 'insufficient_data';
+            metrics_window_days = Math.floor(uptime_days);
+            logger.warn(`Insufficient uptime for ${instanceId}: ${uptime_days.toFixed(1)} days < 7 days required`);
+        }
+
+        logger.info(`Metrics window for ${instanceId}: ${metrics_window_days} days (uptime: ${uptime_days.toFixed(1)} days)`);
+
         // Return metrics with proper null handling
         return {
             cpu_avg: cpu_avg !== null ? Math.round(cpu_avg * 10) / 10 : null,
             cpu_p95: cpu_p95 !== null ? Math.round(cpu_p95 * 10) / 10 : null,
             memory_avg: memory_avg !== null ? Math.round(memory_avg * 10) / 10 : null,
             memory_p95: memory_p95 !== null ? Math.round(memory_p95 * 10) / 10 : null,
+            cpu_credit_balance: cpu_credit_balance !== null ? Math.round(cpu_credit_balance * 10) / 10 : null,
             network_in_bytes: Math.round(network_in_bytes),
             network_out_bytes: Math.round(network_out_bytes),
             disk_read_iops: 0, // Would need EBS metrics
             disk_write_iops: 0,
-            metrics_status: metrics_status // 'complete', 'partial', or 'missing'
+            metrics_status, // 'complete', 'partial', 'insufficient_data', or 'missing'
+            memory_metrics_source, // 'available', 'agent_required', or 'unavailable'
+            missing_metrics, // Array of missing metric names
+            running_hours_last_14d, // Running hours in the last 14 days
+            metrics_window_days, // Calculated based on uptime (7, 14, or 30 days)
+            state: state,
+            state_checked_at: new Date().toISOString()
         };
     } catch (error) {
         logger.error(`Failed to fetch CloudWatch metrics for ${instanceId}:`, error.message);
@@ -299,28 +433,158 @@ const fetchCloudWatchMetrics = async (cloudWatchClient, instanceId, region) => {
             cpu_p95: null,
             memory_avg: null,
             memory_p95: null,
+            cpu_credit_balance: null,
             network_in_bytes: 0,
             network_out_bytes: 0,
             disk_read_iops: 0,
             disk_write_iops: 0,
-            metrics_status: 'missing'
+            metrics_status: 'missing',
+            memory_metrics_source: 'unavailable',
+            missing_metrics: ['cpu_avg', 'cpu_p95', 'memory_avg', 'memory_p95'],
+            running_hours_last_14d: 0,
+            metrics_window_days: parseInt(process.env.METRICS_WINDOW_DAYS) || 30,
+            state: state,
+            state_checked_at: new Date().toISOString()
         };
     }
-};
+}
 
 
 
+/**
+ * Test AWS connection and validate permissions
+ * Returns detailed permission status with missing permissions and impact
+ */
 const testConnection = async (creds) => {
     if (!creds.accessKeyId || !creds.secretAccessKey) {
         throw new Error("Missing AWS Credentials");
     }
-    const client = new STSClient({
-        region: creds.region || "us-east-1",
-        credentials: { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey }
-    });
-    const command = new GetCallerIdentityCommand({});
-    const response = await client.send(command);
-    return { success: true, message: `Connected to AWS as ${response.Arn}`, details: response };
+
+    const region = creds.region || "us-east-1";
+    const credentials = {
+        accessKeyId: creds.accessKeyId,
+        secretAccessKey: creds.secretAccessKey
+    };
+
+    // Test basic connectivity with STS - this will fail if credentials are deleted
+    let identity;
+    try {
+        const stsClient = new STSClient({ region, credentials });
+        const identityCommand = new GetCallerIdentityCommand({});
+        identity = await stsClient.send(identityCommand);
+        logger.info('[AWS Auth] ✓ Credentials are valid and can authenticate');
+    } catch (authError) {
+        logger.error('[AWS Auth] ✗ Authentication failed - credentials may be deleted or revoked');
+
+        // Check if this is a credential error
+        if (authError.name === 'InvalidClientTokenId' ||
+            authError.name === 'SignatureDoesNotMatch' ||
+            authError.name === 'UnrecognizedClientException' ||
+            authError.message?.includes('security token') ||
+            authError.message?.includes('credentials')) {
+            throw new Error('AWS credentials are invalid or have been deleted from AWS IAM');
+        }
+
+        // Re-throw other errors
+        throw authError;
+    }
+
+    // Test required permissions
+    const missingPermissions = [];
+    const impact = [];
+    let connectionStatus = 'full';
+    let hasAnyAccess = false;
+
+    // Test ec2:DescribeInstances
+    try {
+        const ec2Client = new EC2Client({ region, credentials });
+        await ec2Client.send(new DescribeInstancesCommand({ MaxResults: 5 }));
+        hasAnyAccess = true;
+        logger.info('[AWS Permissions] ✓ ec2:DescribeInstances available');
+    } catch (error) {
+        if (error.name === 'UnauthorizedOperation' || error.name === 'AccessDenied') {
+            missingPermissions.push('ec2:DescribeInstances');
+            impact.push('Cannot fetch EC2 instance inventory');
+            connectionStatus = 'partial';
+            logger.warn('[AWS Permissions] ✗ ec2:DescribeInstances missing');
+        }
+    }
+
+    // Test ec2:DescribeInstanceTypes
+    try {
+        const ec2Client = new EC2Client({ region, credentials });
+        await ec2Client.send(new DescribeInstanceTypesCommand({ MaxResults: 1 }));
+        hasAnyAccess = true;
+        logger.info('[AWS Permissions] ✓ ec2:DescribeInstanceTypes available');
+    } catch (error) {
+        if (error.name === 'UnauthorizedOperation' || error.name === 'AccessDenied') {
+            missingPermissions.push('ec2:DescribeInstanceTypes');
+            impact.push('Cannot fetch instance hardware specifications');
+            connectionStatus = 'partial';
+            logger.warn('[AWS Permissions] ✗ ec2:DescribeInstanceTypes missing');
+        }
+    }
+
+    // Test cloudwatch:GetMetricStatistics
+    try {
+        const cloudWatchClient = new CloudWatchClient({ region, credentials });
+        const testMetricCommand = new GetMetricStatisticsCommand({
+            Namespace: 'AWS/EC2',
+            MetricName: 'CPUUtilization',
+            StartTime: new Date(Date.now() - 3600000),
+            EndTime: new Date(),
+            Period: 3600,
+            Statistics: ['Average']
+        });
+        await cloudWatchClient.send(testMetricCommand);
+        hasAnyAccess = true;
+        logger.info('[AWS Permissions] ✓ cloudwatch:GetMetricStatistics available');
+    } catch (error) {
+        if (error.name === 'AccessDenied') {
+            missingPermissions.push('cloudwatch:GetMetricStatistics');
+            impact.push('Cannot fetch CPU and memory metrics');
+            connectionStatus = 'partial';
+            logger.warn('[AWS Permissions] ✗ cloudwatch:GetMetricStatistics missing');
+        }
+    }
+
+    // Test pricing:GetProducts (optional but recommended)
+    try {
+        const { PricingClient, GetProductsCommand } = require("@aws-sdk/client-pricing");
+        const pricingClient = new PricingClient({ region: 'us-east-1', credentials }); // Pricing API only in us-east-1
+        await pricingClient.send(new GetProductsCommand({
+            ServiceCode: 'AmazonEC2',
+            MaxResults: 1
+        }));
+        hasAnyAccess = true;
+        logger.info('[AWS Permissions] ✓ pricing:GetProducts available');
+    } catch (error) {
+        if (error.name === 'AccessDeniedException' || error.name === 'AccessDenied') {
+            missingPermissions.push('pricing:GetProducts');
+            impact.push('Live pricing unavailable - will use cached pricing');
+            connectionStatus = 'partial';
+            logger.warn('[AWS Permissions] ✗ pricing:GetProducts missing');
+        }
+    }
+
+    // If no APIs are accessible, credentials may have no permissions
+    if (!hasAnyAccess && missingPermissions.length > 0) {
+        logger.warn(`⚠️  No AWS APIs accessible - credentials may have no permissions`);
+        throw new Error('AWS credentials have no permissions. Please grant EC2, CloudWatch, or Pricing permissions.');
+    }
+
+    const message = connectionStatus === 'full'
+        ? `Connected to AWS as ${identity.Arn} with full permissions`
+        : `Connected to AWS as ${identity.Arn} with partial permissions`;
+
+    return {
+        success: true,
+        message,
+        connection_status: connectionStatus,
+        missing_permissions: missingPermissions,
+        impact,
+        details: identity
+    };
 };
 
 /**
@@ -330,89 +594,203 @@ const fetchResources = async (userId, creds) => {
     const instances = [];
 
     try {
-        const ec2Client = new EC2Client({
-            region: creds.region,
-            credentials: { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey }
-        });
+        // Fetch all available regions for this account
+        logger.info(`Fetching available AWS regions for user ${userId}`);
+        const regionsResponse = await fetchAvailableRegions(creds);
+        const availableRegions = regionsResponse.regions || [];
+        const regionNames = availableRegions.map(r => r.regionName);
+        logger.info(`Found ${regionNames.length} enabled regions: ${regionNames.join(', ')}`);
 
-        const cloudWatchClient = new CloudWatchClient({
-            region: creds.region,
-            credentials: { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey }
-        });
+        // Loop through each region and fetch instances
+        for (const regionName of regionNames) {
+            logger.info(`\n${'='.repeat(80)}`);
+            logger.info(`🌍 FETCHING RESOURCES FROM REGION: ${regionName}`);
+            logger.info(`${'='.repeat(80)}\n`);
 
-        const ec2Data = await ec2Client.send(new DescribeInstancesCommand({}));
+            try {
+                const ec2Client = new EC2Client({
+                    region: regionName,
+                    credentials: { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey }
+                });
 
-        // Collect ALL instances (running, stopped, idle, etc.)
-        for (const reservation of ec2Data.Reservations || []) {
-            for (const instance of reservation.Instances || []) {
-                // Process all instances regardless of state
-                const instanceState = instance.State.Name; // running, stopped, stopping, terminated, etc.
+                const cloudWatchClient = new CloudWatchClient({
+                    region: regionName,
+                    credentials: { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey }
+                });
 
-                // Fetch real specs from AWS API
-                const specs = await getEc2SpecsFromAWS(ec2Client, instance.InstanceType);
-                const instanceName = instance.Tags?.find(t => t.Key === 'Name')?.Value || instance.InstanceId;
+                const ec2Data = await ec2Client.send(new DescribeInstancesCommand({}));
 
-                // Detect OS using authoritative method
-                const osInfo = await detectAWSOS(ec2Client, instance);
-                logger.info(`Instance ${instanceName}: OS=${osInfo.os_type}, source=${osInfo.os_source}, confidence=${osInfo.os_confidence}`);
-
-                // Fetch CloudWatch metrics only for running instances
-                let metrics;
-                if (instanceState === 'running') {
-                    logger.info(`Fetching metrics for AWS instance ${instanceName} (${instanceState})`);
-                    metrics = await fetchCloudWatchMetrics(cloudWatchClient, instance.InstanceId, creds.region);
-                } else {
-                    // For stopped/idle instances, use zero metrics
-                    logger.info(`Skipping metrics for AWS instance ${instanceName} (${instanceState})`);
-                    metrics = {
-                        cpu_avg: 0,
-                        cpu_p95: 0,
-                        memory_avg: 0,
-                        memory_p95: 0,
-                        network_in_bytes: 0,
-                        network_out_bytes: 0,
-                        disk_read_iops: 0,
-                        disk_write_iops: 0
-                    };
+                // Skip region if no instances - this speeds up scanning
+                if (!ec2Data.Reservations || ec2Data.Reservations.length === 0) {
+                    logger.info(`✅ Region ${regionName}: No instances found, skipping`);
+                    continue;
                 }
 
-                // Calculate uptime (hours since launch)
-                const launchTime = new Date(instance.LaunchTime);
-                const uptime_hours = Math.round((Date.now() - launchTime.getTime()) / (1000 * 60 * 60));
+                // Collect ALL instances (running, stopped, idle, etc.) from this region
+                for (const reservation of ec2Data.Reservations || []) {
+                    for (const instance of reservation.Instances || []) {
+                        // Process all instances regardless of state
+                        const instanceState = instance.State.Name; // running, stopped, stopping, terminated, etc.
 
-                instances.push({
-                    instance_id: instance.InstanceId,
-                    instance_type: instance.InstanceType,
-                    region: creds.region,
-                    cloud: 'aws',
-                    state: instanceState, // Current real-time state from AWS
-                    os: osInfo.os_type, // Use detected OS
-                    os_source: osInfo.os_source,
-                    os_confidence: osInfo.os_confidence,
-                    vcpu_count: specs.vCpu,
-                    ram_gb: specs.memoryGb,
-                    cpu_avg: metrics.cpu_avg,
-                    cpu_p95: metrics.cpu_p95,
-                    memory_avg: metrics.memory_avg,
-                    memory_p95: metrics.memory_p95,
-                    disk_read_iops: metrics.disk_read_iops,
-                    disk_write_iops: metrics.disk_write_iops,
-                    network_in_bytes: metrics.network_in_bytes,
-                    network_out_bytes: metrics.network_out_bytes,
-                    uptime_hours,
-                    cost_per_month: 0, // Will be calculated by ML service from database
-                    source: 'cloud',
-                    name: instanceName,
-                    launch_time: instance.LaunchTime
-                });
+                        // Fetch real specs from AWS API
+                        const specs = await getEc2SpecsFromAWS(ec2Client, instance.InstanceType);
+                        const instanceName = instance.Tags?.find(t => t.Key === 'Name')?.Value || instance.InstanceId;
+
+                        // Detect OS using authoritative method
+                        const osInfo = await detectAWSOS(ec2Client, instance);
+                        logger.info(`Instance ${instanceName}: OS=${osInfo.os_type}, source=${osInfo.os_source}, confidence=${osInfo.os_confidence}`);
+
+                        // Fetch CloudWatch metrics only for running instances
+                        let metrics;
+                        if (instanceState === 'running') {
+                            logger.info(`Fetching metrics for AWS instance ${instanceName} (${instanceState})`);
+                            metrics = await fetchCloudWatchMetrics(cloudWatchClient, instance.InstanceId, regionName, instanceState);
+                        } else {
+                            // For stopped/idle instances, set metrics to null (not zero)
+                            logger.info(`Skipping metrics for AWS instance ${instanceName} (${instanceState})`);
+                            metrics = {
+                                cpu_avg: null,
+                                cpu_p95: null,
+                                memory_avg: null,
+                                memory_p95: null,
+                                cpu_credit_balance: null,
+                                network_in_bytes: 0,
+                                network_out_bytes: 0,
+                                disk_read_iops: 0,
+                                disk_write_iops: 0,
+                                metrics_status: 'missing',
+                                memory_metrics_source: 'unavailable',
+                                missing_metrics: [],
+                                running_hours_last_14d: 0
+                            };
+                        }
+
+                        const instanceData = {
+                            instance_id: instance.InstanceId,
+                            instance_type: instance.InstanceType,
+                            region: regionName,
+                            cloud: 'aws',
+                            state: instanceState, // Current real-time state from AWS
+                            os: osInfo.os_type, // Use detected OS
+                            os_source: osInfo.os_source,
+                            os_confidence: osInfo.os_confidence,
+                            vcpu_count: specs.vCpu,
+                            ram_gb: specs.memoryGb,
+                            architecture: specs.architecture,
+                            burstable: specs.burstable,
+                            gpu: specs.gpu,
+                            cpu_avg: metrics.cpu_avg,
+                            cpu_p95: metrics.cpu_p95,
+                            memory_avg: metrics.memory_avg,
+                            memory_p95: metrics.memory_p95,
+                            cpu_credit_balance: metrics.cpu_credit_balance,
+                            disk_read_iops: metrics.disk_read_iops,
+                            disk_write_iops: metrics.disk_write_iops,
+                            network_in_bytes: metrics.network_in_bytes,
+                            network_out_bytes: metrics.network_out_bytes,
+                            metrics_status: metrics.metrics_status,
+                            memory_metrics_source: metrics.memory_metrics_source,
+                            missing_metrics: metrics.missing_metrics,
+                            running_hours_last_14d: metrics.running_hours_last_14d,
+                            cost_per_month: 0, // Will be calculated by ML service from database
+                            source: 'cloud',
+                            name: instanceName,
+                            launch_time: instance.LaunchTime
+                        };
+
+                        // Log detailed instance information
+                        logger.info(`\n${'='.repeat(80)}`);
+                        logger.info(`📊 AWS INSTANCE DETAILS FETCHED`);
+                        logger.info(`${'='.repeat(80)}`);
+                        logger.info(`Instance Name: ${instanceName}`);
+                        logger.info(`Instance ID: ${instance.InstanceId}`);
+                        logger.info(`Instance Type: ${instance.InstanceType}`);
+                        logger.info(`Region: ${regionName}`);
+                        logger.info(`State: ${instanceState}`);
+                        logger.info(`Launch Time: ${instance.LaunchTime}`);
+                        logger.info(`\n--- Hardware Specifications ---`);
+                        logger.info(`vCPU Count: ${specs.vCpu || 'N/A'}`);
+                        logger.info(`RAM (GB): ${specs.memoryGb || 'N/A'}`);
+                        logger.info(`Architecture: ${specs.architecture || 'N/A'}`);
+                        logger.info(`Burstable: ${specs.burstable ? 'Yes (T-series)' : 'No'}`);
+                        logger.info(`GPU: ${specs.gpu ? 'Yes' : 'No'}`);
+                        logger.info(`\n--- Operating System ---`);
+                        logger.info(`OS Type: ${osInfo.os_type}`);
+                        logger.info(`OS Source: ${osInfo.os_source}`);
+                        logger.info(`OS Confidence: ${osInfo.os_confidence}`);
+                        logger.info(`\n--- Metrics (Last 14 Days) ---`);
+                        logger.info(`CPU Average: ${metrics.cpu_avg !== null ? metrics.cpu_avg + '%' : 'N/A'}`);
+                        logger.info(`CPU P95: ${metrics.cpu_p95 !== null ? metrics.cpu_p95 + '%' : 'N/A'}`);
+                        logger.info(`Memory Average: ${metrics.memory_avg !== null ? metrics.memory_avg + '%' : 'N/A (Agent Required)'}`);
+                        logger.info(`Memory P95: ${metrics.memory_p95 !== null ? metrics.memory_p95 + '%' : 'N/A (Agent Required)'}`);
+                        logger.info(`CPU Credit Balance: ${metrics.cpu_credit_balance !== null ? metrics.cpu_credit_balance : 'N/A'}`);
+                        logger.info(`Network In: ${metrics.network_in_bytes} bytes`);
+                        logger.info(`Network Out: ${metrics.network_out_bytes} bytes`);
+                        logger.info(`Running Hours (14d): ${metrics.running_hours_last_14d} hours`);
+                        logger.info(`Metrics Status: ${metrics.metrics_status}`);
+                        logger.info(`Memory Metrics Source: ${metrics.memory_metrics_source}`);
+                        if (metrics.missing_metrics && metrics.missing_metrics.length > 0) {
+                            logger.info(`Missing Metrics: ${metrics.missing_metrics.join(', ')}`);
+                        }
+                        logger.info(`${'='.repeat(80)}\n`);
+
+                        instances.push(instanceData);
+                    }
+                }
+
+                logger.info(`✅ Region ${regionName}: Collected ${ec2Data.Reservations?.length || 0} reservations`);
+
+            } catch (regionError) {
+                // Log region-specific errors but continue with other regions
+                logger.error(`❌ Error fetching from region ${regionName}:`, regionError.message);
+                logger.info(`Continuing with remaining regions...`);
             }
         }
 
-        logger.info(`Collected ${instances.length} AWS EC2 instances (all states)`);
+        logger.info(`\n${'='.repeat(80)}`);
+        logger.info(`✅ AWS MULTI-REGION FETCH SUMMARY`);
+        logger.info(`${'='.repeat(80)}`);
+        logger.info(`Total Instances Collected: ${instances.length}`);
+        logger.info(`Regions Scanned: ${regionNames.length}`);
+        logger.info(`User ID: ${userId}`);
+
+        // Count by state
+        const stateCount = {};
+        instances.forEach(inst => {
+            stateCount[inst.state] = (stateCount[inst.state] || 0) + 1;
+        });
+        logger.info(`\nInstances by State:`);
+        Object.entries(stateCount).forEach(([state, count]) => {
+            logger.info(`  ${state}: ${count}`);
+        });
+
+        // Count by OS
+        const osCount = {};
+        instances.forEach(inst => {
+            osCount[inst.os] = (osCount[inst.os] || 0) + 1;
+        });
+        logger.info(`\nInstances by OS:`);
+        Object.entries(osCount).forEach(([os, count]) => {
+            logger.info(`  ${os}: ${count}`);
+        });
+
+        logger.info(`${'='.repeat(80)}\n`);
+
+        // Validate data before processing
+        const validationResults = validateVMBatch(instances, 'aws');
+
+        // Mark invalid VMs with errors
+        const validatedInstances = instances.map(vm => {
+            const validation = require('../utils/dataValidator').validateVMData(vm, 'aws');
+            if (!validation.valid) {
+                return markVMWithError(vm, validation.errors);
+            }
+            return vm;
+        });
 
         // Normalize and enrich instances
-        const normalizedVMs = instances.map(vm => normalizeVM(vm, 'cloud', { cloud: 'aws' }));
-        const enrichedVMs = enrichVMBatch(normalizedVMs);
+        const normalizedVMs = validatedInstances.map(vm => normalizeVM(vm, 'cloud', { cloud: 'aws' }));
+        const enrichedVMs = await enrichVMBatch(normalizedVMs);
 
         // Send to ML service for analysis (only for running instances with metrics)
         let mlResults = [];
@@ -467,8 +845,23 @@ const fetchResources = async (userId, creds) => {
                         diskReadBytes: result.metrics?.disk_read_iops || 0,
                         diskWriteBytes: result.metrics?.disk_write_iops || 0,
 
+                        // NEW: CPU + Memory Recommendation System Metrics
+                        cpu_avg: result.metrics?.cpu_avg ?? null,
+                        cpu_p95: result.metrics?.cpu_p95 ?? null,
+                        memory_avg: result.metrics?.memory_avg ?? null,
+                        memory_p95: result.metrics?.memory_p95 ?? null,
+
                         // Store metrics status
-                        metrics_status: originalInstance?.metrics?.metrics_status || 'missing',
+                        metrics_status: result.metrics?.metrics_status || originalInstance?.metrics_status || 'missing',
+
+                        // NEW: Metrics metadata for recommendation engine
+                        running_hours_last_14d: result.metrics?.running_hours_last_14d || originalInstance?.running_hours_last_14d || 0,
+                        metrics_window_days: result.metrics?.metrics_window_days || originalInstance?.metrics_window_days || null,
+                        state_checked_at: result.metrics?.state_checked_at || originalInstance?.state_checked_at || new Date(),
+
+                        // NEW: Memory metrics source tracking
+                        memory_metrics_source: result.metrics?.memory_metrics_source || originalInstance?.memory_metrics_source || 'unavailable',
+                        missing_metrics: result.metrics?.missing_metrics || originalInstance?.missing_metrics || [],
 
                         optimizationStatus: finding,
                         recommendation: result.ml_recommendation_text || result.recommendation,
@@ -528,9 +921,11 @@ const fetchResources = async (userId, creds) => {
         logger.info(`AWS EC2 sync complete for user ${userId}: ${mlResults.length} instances analyzed`);
 
         // Also fetch S3 buckets (no ML analysis needed)
+        // S3 buckets are global, so we only need to fetch once using any region
         try {
+            const s3Region = regionNames[0] || 'us-east-1'; // Use first available region or default
             const s3Client = new S3Client({
-                region: creds.region,
+                region: s3Region,
                 credentials: { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey }
             });
             const s3Data = await s3Client.send(new ListBucketsCommand({}));
@@ -544,7 +939,7 @@ const fetchResources = async (userId, creds) => {
                         name: bucket.Name,
                         provider: 'AWS',
                         service: 'S3',
-                        region: creds.region,
+                        region: 'global', // S3 buckets are global resources
                         resourceType: 'Bucket',
                         optimizationStatus: 'Optimal',
                         created: bucket.CreationDate,
@@ -566,13 +961,6 @@ const fetchResources = async (userId, creds) => {
 
     } catch (error) {
         logger.error("AWS EC2 Fetch Error", error);
-
-        // Handle credential errors
-        const errorInfo = await handleCloudError(error, userId, 'AWS');
-        if (errorInfo.isCredentialError) {
-            throw new Error(errorInfo.message);
-        }
-
         throw error;
     }
 };
@@ -630,4 +1018,279 @@ const fetchAvailableRegions = async (creds) => {
     }
 };
 
-module.exports = { testConnection, fetchResources, fetchAvailableRegions };
+/**
+ * Fetch AWS EC2 resources and return data directly (no MongoDB persistence)
+ * This method is used by the controller to fetch resources for localStorage storage
+ * It reuses all the data fetching, normalization, enrichment, and ML prediction logic
+ * from fetchResources() but skips MongoDB operations
+ */
+const fetchResourcesSync = async (userId, creds) => {
+    const instances = [];
+
+    try {
+        // Fetch all available regions for this account
+        logger.info(`[Sync] Fetching available AWS regions for user ${userId}`);
+        const regionsResponse = await fetchAvailableRegions(creds);
+        const availableRegions = regionsResponse.regions || [];
+        const regionNames = availableRegions.map(r => r.regionName);
+        logger.info(`[Sync] Found ${regionNames.length} enabled regions: ${regionNames.join(', ')}`);
+
+        // Loop through each region and fetch instances
+        for (const regionName of regionNames) {
+            logger.info(`\n${'='.repeat(80)}`);
+            logger.info(`🌍 [Sync] FETCHING RESOURCES FROM REGION: ${regionName}`);
+            logger.info(`${'='.repeat(80)}\n`);
+
+            try {
+                const ec2Client = new EC2Client({
+                    region: regionName,
+                    credentials: { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey }
+                });
+
+                const cloudWatchClient = new CloudWatchClient({
+                    region: regionName,
+                    credentials: { accessKeyId: creds.accessKeyId, secretAccessKey: creds.secretAccessKey }
+                });
+
+                const ec2Data = await ec2Client.send(new DescribeInstancesCommand({}));
+
+                // Skip region if no instances
+                if (!ec2Data.Reservations || ec2Data.Reservations.length === 0) {
+                    logger.info(`✅ [Sync] Region ${regionName}: No instances found, skipping`);
+                    continue;
+                }
+
+                // Collect ALL instances from this region
+                for (const reservation of ec2Data.Reservations || []) {
+                    for (const instance of reservation.Instances || []) {
+                        const instanceState = instance.State.Name;
+
+                        // Fetch real specs from AWS API
+                        const specs = await getEc2SpecsFromAWS(ec2Client, instance.InstanceType);
+                        const instanceName = instance.Tags?.find(t => t.Key === 'Name')?.Value || instance.InstanceId;
+
+                        // Detect OS using authoritative method
+                        const osInfo = await detectAWSOS(ec2Client, instance);
+                        logger.info(`[Sync] Instance ${instanceName}: OS=${osInfo.os_type}, source=${osInfo.os_source}, confidence=${osInfo.os_confidence}`);
+
+                        // Fetch CloudWatch metrics only for running instances
+                        let metrics;
+                        if (instanceState === 'running') {
+                            logger.info(`[Sync] Fetching metrics for AWS instance ${instanceName} (${instanceState})`);
+                            metrics = await fetchCloudWatchMetrics(cloudWatchClient, instance.InstanceId, regionName, instanceState);
+                        } else {
+                            logger.info(`[Sync] Skipping metrics for AWS instance ${instanceName} (${instanceState})`);
+                            metrics = {
+                                cpu_avg: null,
+                                cpu_p95: null,
+                                memory_avg: null,
+                                memory_p95: null,
+                                cpu_credit_balance: null,
+                                network_in_bytes: 0,
+                                network_out_bytes: 0,
+                                disk_read_iops: 0,
+                                disk_write_iops: 0,
+                                metrics_status: 'missing',
+                                memory_metrics_source: 'unavailable',
+                                missing_metrics: [],
+                                running_hours_last_14d: 0
+                            };
+                        }
+
+                        const instanceData = {
+                            instance_id: instance.InstanceId,
+                            instance_type: instance.InstanceType,
+                            region: regionName,
+                            cloud: 'aws',
+                            state: instanceState,
+                            os: osInfo.os_type,
+                            os_source: osInfo.os_source,
+                            os_confidence: osInfo.os_confidence,
+                            vcpu_count: specs.vCpu,
+                            ram_gb: specs.memoryGb,
+                            architecture: specs.architecture,
+                            burstable: specs.burstable,
+                            gpu: specs.gpu,
+                            cpu_avg: metrics.cpu_avg,
+                            cpu_p95: metrics.cpu_p95,
+                            memory_avg: metrics.memory_avg,
+                            memory_p95: metrics.memory_p95,
+                            cpu_credit_balance: metrics.cpu_credit_balance,
+                            disk_read_iops: metrics.disk_read_iops,
+                            disk_write_iops: metrics.disk_write_iops,
+                            network_in_bytes: metrics.network_in_bytes,
+                            network_out_bytes: metrics.network_out_bytes,
+                            metrics_status: metrics.metrics_status,
+                            memory_metrics_source: metrics.memory_metrics_source,
+                            missing_metrics: metrics.missing_metrics,
+                            running_hours_last_14d: metrics.running_hours_last_14d,
+                            cost_per_month: 0,
+                            source: 'cloud',
+                            name: instanceName,
+                            launch_time: instance.LaunchTime
+                        };
+
+                        instances.push(instanceData);
+                    }
+                }
+
+                logger.info(`✅ [Sync] Region ${regionName}: Collected ${ec2Data.Reservations?.length || 0} reservations`);
+
+            } catch (regionError) {
+                logger.error(`❌ [Sync] Error fetching from region ${regionName}:`, regionError.message);
+                logger.info(`[Sync] Continuing with remaining regions...`);
+            }
+        }
+
+        logger.info(`\n${'='.repeat(80)}`);
+        logger.info(`✅ [Sync] AWS MULTI-REGION FETCH SUMMARY`);
+        logger.info(`${'='.repeat(80)}`);
+        logger.info(`Total Instances Collected: ${instances.length}`);
+        logger.info(`Regions Scanned: ${regionNames.length}`);
+        logger.info(`User ID: ${userId}`);
+        logger.info(`${'='.repeat(80)}\n`);
+
+        // Validate data before processing
+        const validationResults = validateVMBatch(instances, 'aws');
+
+        // Mark invalid VMs with errors
+        const validatedInstances = instances.map(vm => {
+            const validation = require('../utils/dataValidator').validateVMData(vm, 'aws');
+            if (!validation.valid) {
+                return markVMWithError(vm, validation.errors);
+            }
+            return vm;
+        });
+
+        // Normalize and enrich instances
+        const normalizedVMs = validatedInstances.map(vm => normalizeVM(vm, 'cloud', { cloud: 'aws' }));
+        const enrichedVMs = await enrichVMBatch(normalizedVMs);
+
+        // Send to ML service for analysis
+        let mlResults = [];
+        if (enrichedVMs.length > 0) {
+            logger.info(`[Sync] Sending ${enrichedVMs.length} AWS instances to ML service`);
+            mlResults = await processVMsInBatches(enrichedVMs, 100);
+            logger.info(`[Sync] Received ${mlResults.length} predictions from ML service`);
+        }
+
+        // Build final results array with all required fields for frontend
+        const results = mlResults.map(result => {
+            const finding = result.prediction || 'Optimal';
+            const savings = result.recommendation?.monthly_savings || result.savings || 0;
+            const originalInstance = instances.find(i => i.instance_id === result.instance_id);
+
+            // Extract instance family
+            const instanceFamily = result.instance_type ? result.instance_type.split('.')[0] : null;
+
+            // Determine architecture
+            const architecture = result.instance_type?.includes('graviton') ||
+                result.instance_type?.startsWith('a1') ||
+                result.instance_type?.startsWith('t4g') ||
+                result.instance_type?.startsWith('m6g') ? 'arm64' : 'x86_64';
+
+            // Get recommended instance specs
+            const recommendedSpecs = result.recommendation?.suggested_instance ?
+                getEc2Specs(result.recommendation.suggested_instance) : null;
+
+            return {
+                // Core identification
+                instance_id: result.instance_id,
+                resourceId: result.instance_id,
+                name: originalInstance?.name || result.instance_id,
+                provider: 'AWS',
+                service: 'EC2',
+                cloud: 'aws',
+
+                // Location and type
+                region: result.region,
+                resourceType: result.instance_type,
+                instance_type: result.instance_type,
+                state: originalInstance?.state || 'unknown',
+                status: originalInstance?.state || 'unknown', // Add status field for frontend compatibility
+
+                // Hardware specs
+                vCpu: originalInstance?.vcpu_count || null,
+                vcpu_count: originalInstance?.vcpu_count || null,
+                memoryGb: originalInstance?.ram_gb || null,
+                ram_gb: originalInstance?.ram_gb || null,
+                architecture: architecture,
+                burstable: originalInstance?.burstable || false,
+                gpu: originalInstance?.gpu || false,
+
+                // Metrics
+                avgCpuUtilization: result.metrics?.cpu_avg ?? null,
+                cpu_avg: result.metrics?.cpu_avg ?? null,
+                maxCpuUtilization: result.metrics?.cpu_p95 ?? null,
+                cpu_p95: result.metrics?.cpu_p95 ?? null,
+                avgMemoryUtilization: result.metrics?.memory_avg ?? null,
+                memory_avg: result.metrics?.memory_avg ?? null,
+                maxMemoryUtilization: result.metrics?.memory_p95 ?? null,
+                memory_p95: result.metrics?.memory_p95 ?? null,
+                networkIn: result.metrics?.network_in_bytes || 0,
+                network_in_bytes: result.metrics?.network_in_bytes || 0,
+                networkOut: result.metrics?.network_out_bytes || 0,
+                network_out_bytes: result.metrics?.network_out_bytes || 0,
+                diskReadBytes: result.metrics?.disk_read_iops || 0,
+                disk_read_iops: result.metrics?.disk_read_iops || 0,
+                diskWriteBytes: result.metrics?.disk_write_iops || 0,
+                disk_write_iops: result.metrics?.disk_write_iops || 0,
+                metrics_status: originalInstance?.metrics_status || 'missing',
+                memory_metrics_source: originalInstance?.memory_metrics_source || 'unavailable',
+
+                // Optimization
+                optimizationStatus: finding,
+                recommendation: result.ml_recommendation_text || result.recommendation,
+                estimatedSavings: savings,
+                estimatedMonthlyCost: result.current_cost_per_month || 0,
+                confidence: result.confidence || 0,
+                prediction_confidence: result.confidence || 0,
+                currentCost: result.current_cost_per_month || 0,
+                optimizedCost: result.recommendation?.suggested_instance ?
+                    (result.current_cost_per_month - savings) : result.current_cost_per_month,
+                recommendedType: result.recommendation?.suggested_instance || result.recommendedType || result.instance_type,
+                recommendedVcpu: recommendedSpecs?.vCpu || result.metrics?.vcpu_count,
+                recommendedMemory: recommendedSpecs?.memoryGb || result.metrics?.ram_gb,
+
+                // OS detection
+                os: originalInstance?.os || 'unknown',
+                os_type: originalInstance?.os || 'unknown',
+                os_source: originalInstance?.os_source || 'unresolved',
+                os_confidence: originalInstance?.os_confidence || 'low',
+
+                // Pricing
+                price_source: 'live',
+                price_last_updated: new Date(),
+
+                // Architecture & compatibility
+                instance_family: instanceFamily,
+                available_in_region: true,
+
+                // Recommendation reason
+                reason: result.ml_recommendation_text ||
+                    (finding === 'Oversized' ? 'Instance is oversized based on current usage patterns. Downsizing will maintain performance while reducing costs.' :
+                        finding === 'Undersized' ? 'Instance is undersized and may experience performance issues. Upgrading is recommended.' :
+                            'Instance is optimally sized for current workload.'),
+
+                // Timestamps
+                created: originalInstance?.launch_time,
+                launch_time: originalInstance?.launch_time,
+                lastFetched: Date.now(),
+
+                // Full metrics object
+                metrics: result.metrics
+            };
+        });
+
+        logger.info(`[Sync] AWS EC2 sync complete for user ${userId}: ${results.length} instances processed`);
+
+        // Return array of resource objects (NO MongoDB operations)
+        return results;
+
+    } catch (error) {
+        logger.error("[Sync] AWS EC2 Fetch Error", error);
+        throw error;
+    }
+};
+
+module.exports = { testConnection, fetchResources, fetchResourcesSync, fetchAvailableRegions };

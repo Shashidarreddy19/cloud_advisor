@@ -1,4 +1,5 @@
 import api from './api';
+import * as localStorageService from './localStorageService';
 
 const login = async (email, password) => {
     const response = await api.post('/auth/login', { email, password });
@@ -21,6 +22,10 @@ const signup = async (name, email, password) => {
 };
 
 const logout = () => {
+    // SECURITY: Clear user-specific cloud data before removing userId
+    localStorageService.clearUserData();
+
+    // Clear auth data
     localStorage.removeItem('token');
     localStorage.removeItem('user');
     localStorage.removeItem('userId');

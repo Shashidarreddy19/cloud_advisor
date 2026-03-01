@@ -67,23 +67,15 @@ export default function UnifiedSidebar() {
                 onMouseEnter={(e) => e.currentTarget.style.background = 'var(--az-bg)'}
                 onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
             >
-                <div style={{
-                    width: 32, height: 32, borderRadius: 6,
-                    background: 'var(--az-blue)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                }}>
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                        <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z" fill="white" />
-                    </svg>
-                </div>
-                <div>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--az-text)', lineHeight: 1.2 }}>
-                        Cloud Optimizer
-                    </div>
-                    <div style={{ fontSize: 10, color: 'var(--az-text-2)', marginTop: 1 }}>
-                        ML-Powered Platform
-                    </div>
-                </div>
+                <img
+                    src="/logo.png"
+                    alt="Cloud Optimizer"
+                    style={{
+                        height: '32px',
+                        width: 'auto',
+                        objectFit: 'contain'
+                    }}
+                />
             </div>
 
             {/* Nav Sections */}

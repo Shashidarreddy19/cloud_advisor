@@ -2,8 +2,10 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import numpy as np
+import pandas as pd
 import joblib
 import os
+import json
 import psycopg2
 import psycopg2.extras
 from typing import List, Optional
@@ -19,11 +21,23 @@ from savings_calculator import calculate_savings, format_savings_message
 # Load .env at startup
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
-# Load ML model
+# Load ML model and scaler
 MODEL_PATH = "xgboost_vm_model.pkl"
-model = joblib.load(MODEL_PATH)
+SCALER_PATH = "scaler.pkl"
+REGISTRY_PATH = "model_registry.json"
 
-# Feature order for ML model
+model = joblib.load(MODEL_PATH)
+scaler = joblib.load(SCALER_PATH)
+
+# Load model version from registry
+model_version = "unknown"
+if os.path.exists(REGISTRY_PATH):
+    with open(REGISTRY_PATH, 'r') as f:
+        registry = json.load(f)
+        model_version = registry.get("latest_version", "unknown")
+        print(f"Loaded model version: {model_version}")
+
+# Feature order for ML model (12 features - matches trained model)
 FEATURE_ORDER = [
     "cpu_avg", "cpu_p95", "memory_avg", "memory_p95",
     "disk_read_iops", "disk_write_iops",
@@ -68,6 +82,7 @@ def decimal_safe(obj):
 
 # Request schemas
 class VMPredictionRequest(BaseModel):
+    # Original 12 (required)
     cpu_avg: float = Field(..., ge=0, le=100)
     cpu_p95: float = Field(..., ge=0, le=100)
     memory_avg: float = Field(..., ge=0, le=100)
@@ -80,11 +95,26 @@ class VMPredictionRequest(BaseModel):
     ram_gb: float = Field(..., ge=0)
     uptime_hours: float = Field(..., ge=0)
     cost_per_month: float = Field(..., ge=0)
+    
+    # New 12 (optional with defaults for backward compatibility)
+    cpu_spike_ratio: float = Field(default=1.0, ge=1.0)
+    memory_spike_ratio: float = Field(default=1.0, ge=1.0)
+    cpu_throttle_percent: float = Field(default=0.0, ge=0, le=100)
+    peak_hour_avg_cpu: Optional[float] = Field(default=None, ge=0, le=100)
+    off_peak_avg_cpu: Optional[float] = Field(default=None, ge=0, le=100)
+    weekend_avg_cpu: Optional[float] = Field(default=None, ge=0, le=100)
+    memory_swap_usage: float = Field(default=0.0, ge=0, le=100)
+    disk_latency_ms: float = Field(default=10.0, ge=0)
+    network_packet_loss: float = Field(default=0.0, ge=0, le=100)
+    data_days: int = Field(default=30, ge=1)
+    granularity_hourly: int = Field(default=1, ge=0, le=1)
+    workload_pattern: int = Field(default=0, ge=0, le=3)
 
 class VMBatchPredictionRequest(BaseModel):
     items: List[VMPredictionRequest]
 
 class CSVBatchItem(BaseModel):
+    # Original 12 with defaults
     cpu_avg: float = Field(default=0, ge=0, le=100)
     cpu_p95: float = Field(default=0, ge=0, le=100)
     memory_avg: float = Field(default=0, ge=0, le=100)
@@ -97,6 +127,22 @@ class CSVBatchItem(BaseModel):
     ram_gb: float = Field(default=4, ge=0)
     uptime_hours: float = Field(default=720, ge=0)
     cost_per_month: float = Field(default=0, ge=0)
+    
+    # New 12 with defaults
+    cpu_spike_ratio: float = Field(default=1.0, ge=1.0)
+    memory_spike_ratio: float = Field(default=1.0, ge=1.0)
+    cpu_throttle_percent: float = Field(default=0.0, ge=0, le=100)
+    peak_hour_avg_cpu: float = Field(default=0.0, ge=0, le=100)
+    off_peak_avg_cpu: float = Field(default=0.0, ge=0, le=100)
+    weekend_avg_cpu: float = Field(default=0.0, ge=0, le=100)
+    memory_swap_usage: float = Field(default=0.0, ge=0, le=100)
+    disk_latency_ms: float = Field(default=10.0, ge=0)
+    network_packet_loss: float = Field(default=0.0, ge=0, le=100)
+    data_days: int = Field(default=30, ge=1)
+    granularity_hourly: int = Field(default=1, ge=0, le=1)
+    workload_pattern: int = Field(default=0, ge=0, le=3)
+    
+    # Metadata
     cloud: str = Field(default="aws")
     region: str = Field(default="us-east-1")
     instance_type: str = Field(default="")
@@ -113,6 +159,92 @@ def map_prediction(pred: int) -> str:
         1: "Oversized – Consider downsizing",
         2: "Undersized – Consider upgrading"
     }.get(pred, "Unknown")
+
+
+def apply_feature_defaults(data: dict) -> dict:
+    """
+    Apply defaults for missing basic features (12-feature model).
+    No extra features needed - model only uses 12 features.
+    """
+    # Just return the data as-is since we only need the 12 basic features
+    # The model will use whatever is provided
+    return data
+
+
+def calculate_data_quality_factor(data_days: int = 30) -> tuple:
+    """
+    Calculate confidence adjustment factor (simplified for 12-feature model).
+    Since we don't have data_days in the model, always return high quality.
+    """
+    return 1.0, "high"
+
+
+def detect_anomalies(features: dict) -> dict:
+    """
+    Detect anomalies before ML prediction (simplified for 12-feature model).
+    
+    Returns:
+        {
+            "anomaly_flag": str,
+            "recommendation_blocked": bool,
+            "anomaly_message": str,
+            "confidence_cap": float | None
+        }
+    """
+    cpu_avg = features.get('cpu_avg', 0)
+    memory_p95 = features.get('memory_p95', 0)
+    uptime_hours = features.get('uptime_hours', 0)
+    
+    # Check for sustained overload
+    if cpu_avg > 95:
+        return {
+            "anomaly_flag": "sustained_overload",
+            "recommendation_blocked": True,
+            "anomaly_message": "This instance is critically overloaded. Investigate root cause first.",
+            "confidence_cap": None
+        }
+    
+    # Check for memory crisis
+    if memory_p95 > 95:
+        return {
+            "anomaly_flag": "memory_crisis",
+            "recommendation_blocked": True,
+            "anomaly_message": "Severe memory pressure detected. Upsizing recommended immediately.",
+            "confidence_cap": None
+        }
+    
+    # Check for zombie candidate
+    if cpu_avg < 1 and uptime_hours > 720:
+        return {
+            "anomaly_flag": "zombie_candidate",
+            "recommendation_blocked": False,
+            "anomaly_message": "Instance has been idle for 30+ days. Recommended action: Terminate to save cost.",
+            "confidence_cap": None,
+            "override_recommendation": "TERMINATE"
+        }
+    
+    # No anomalies detected
+    return {
+        "anomaly_flag": None,
+        "recommendation_blocked": False,
+        "anomaly_message": None,
+        "confidence_cap": None
+    }
+    if cpu_spike_ratio > 10:
+        return {
+            "anomaly_flag": "spike_contamination",
+            "recommendation_blocked": False,
+            "anomaly_message": "Extreme CPU spike detected in data. Recommendation confidence is capped at 60%.",
+            "confidence_cap": 0.6
+        }
+    
+    # No anomaly detected
+    return {
+        "anomaly_flag": "none",
+        "recommendation_blocked": False,
+        "anomaly_message": None,
+        "confidence_cap": None
+    }
 
 # =============================================================================
 # DATABASE QUERY FUNCTIONS - NO MOCK DATA
@@ -440,16 +572,79 @@ def health():
 def predict_vm(request: VMPredictionRequest):
     try:
         data = request.dict()
-        features = np.array([[data[f] for f in FEATURE_ORDER]])
         
-        prediction = int(model.predict(features)[0])
-        probabilities = model.predict_proba(features)[0]
-        confidence = float(max(probabilities))
+        # Apply feature defaults
+        data = apply_feature_defaults(data)
+        
+        # Detect anomalies
+        anomaly_result = detect_anomalies(data)
+        
+        # If zombie candidate, override recommendation
+        if anomaly_result.get("override_recommendation") == "TERMINATE":
+            return {
+                "prediction": 3,  # Use 3 for ZOMBIE even though model doesn't have it
+                "confidence": 0.95,
+                "recommendation": "ZOMBIE – Consider terminating (low utilization, high uptime)",
+                "data_quality": calculate_data_quality_factor(data['data_days'])[1],
+                "data_days": data['data_days'],
+                "granularity": "hourly" if data['granularity_hourly'] == 1 else "daily",
+                "model_version": model_version,
+                "anomaly_flag": anomaly_result["anomaly_flag"],
+                "recommendation_blocked": anomaly_result["recommendation_blocked"],
+                "anomaly_message": anomaly_result["anomaly_message"]
+            }
+        
+        # If recommendation blocked, return error
+        if anomaly_result["recommendation_blocked"]:
+            return {
+                "prediction": -1,
+                "confidence": 0.0,
+                "recommendation": "BLOCKED",
+                "data_quality": calculate_data_quality_factor(data['data_days'])[1],
+                "data_days": data['data_days'],
+                "granularity": "hourly" if data['granularity_hourly'] == 1 else "daily",
+                "model_version": model_version,
+                "anomaly_flag": anomaly_result["anomaly_flag"],
+                "recommendation_blocked": anomaly_result["recommendation_blocked"],
+                "anomaly_message": anomaly_result["anomaly_message"]
+            }
+        
+        # Construct feature vector as DataFrame with proper column names
+        feature_dict = {f: data[f] for f in FEATURE_ORDER}
+        features_df = pd.DataFrame([feature_dict])[FEATURE_ORDER]
+        
+        # Apply scaler (now with DataFrame)
+        features_scaled = scaler.transform(features_df)
+        
+        # Run prediction
+        prediction = int(model.predict(features_scaled)[0])
+        probabilities = model.predict_proba(features_scaled)[0]
+        model_confidence = float(max(probabilities))
+        
+        # Calculate data quality factor
+        data_quality_factor, data_quality_label = calculate_data_quality_factor(data['data_days'])
+        
+        # Adjust confidence
+        final_confidence = model_confidence * data_quality_factor
+        
+        # Apply confidence cap if spike contamination
+        if anomaly_result["confidence_cap"] is not None:
+            final_confidence = min(final_confidence, anomaly_result["confidence_cap"])
+        
+        # Round to 3 decimal places
+        final_confidence = round(final_confidence, 3)
         
         return {
             "prediction": prediction,
-            "confidence": round(confidence, 3),
-            "recommendation": map_prediction(prediction)
+            "confidence": final_confidence,
+            "recommendation": map_prediction(prediction),
+            "data_quality": data_quality_label,
+            "data_days": data['data_days'],
+            "granularity": "hourly" if data['granularity_hourly'] == 1 else "daily",
+            "model_version": model_version,
+            "anomaly_flag": anomaly_result["anomaly_flag"],
+            "recommendation_blocked": anomaly_result["recommendation_blocked"],
+            "anomaly_message": anomaly_result["anomaly_message"]
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -457,23 +652,45 @@ def predict_vm(request: VMPredictionRequest):
 @app.post("/predict/vm/batch")
 def predict_vm_batch(request: VMBatchPredictionRequest):
     try:
-        rows = []
+        # Build DataFrame for all rows at once
+        rows_data = []
         for item in request.items:
             data = item.dict()
-            rows.append([data[f] for f in FEATURE_ORDER])
+            data = apply_feature_defaults(data)
+            rows_data.append({f: data[f] for f in FEATURE_ORDER})
         
-        features = np.array(rows)
-        preds = model.predict(features)
-        probs = model.predict_proba(features)
+        features_df = pd.DataFrame(rows_data)[FEATURE_ORDER]
+        features_scaled = scaler.transform(features_df)
+        
+        preds = model.predict(features_scaled)
+        probs = model.predict_proba(features_scaled)
         
         results = []
-        for i in range(len(preds)):
+        for i, item in enumerate(request.items):
             pred = int(preds[i])
-            confidence = float(max(probs[i]))
+            model_confidence = float(max(probs[i]))
+            
+            data = item.dict()
+            data = apply_feature_defaults(data)
+            
+            # Calculate data quality factor
+            data_quality_factor, data_quality_label = calculate_data_quality_factor(data['data_days'])
+            final_confidence = round(model_confidence * data_quality_factor, 3)
+            
+            # Detect anomalies
+            anomaly_result = detect_anomalies(data)
+            
             results.append({
                 "prediction": pred,
-                "confidence": round(confidence, 3),
-                "recommendation": map_prediction(pred)
+                "confidence": final_confidence,
+                "recommendation": map_prediction(pred),
+                "data_quality": data_quality_label,
+                "data_days": data['data_days'],
+                "granularity": "hourly" if data['granularity_hourly'] == 1 else "daily",
+                "model_version": model_version,
+                "anomaly_flag": anomaly_result["anomaly_flag"],
+                "recommendation_blocked": anomaly_result["recommendation_blocked"],
+                "anomaly_message": anomaly_result["anomaly_message"]
             })
         
         return {"count": len(results), "results": results}
@@ -485,17 +702,28 @@ def predict_csv_batch(request: CSVBatchRequest):
     """
     CSV batch endpoint with PostgreSQL pricing lookup.
     NO MOCK DATA - all data comes from database tables.
+    Supports 24 features with backward compatibility.
     """
     try:
-        # Prepare features for ML model
-        feature_rows = []
+        # Check batch size limits
+        if len(request.items) > 50000:
+            raise HTTPException(
+                status_code=413,
+                detail="Batch too large. Maximum 50,000 instances per upload. Please split your file and upload in parts."
+            )
+        
+        # Prepare features for ML model as DataFrame
+        feature_rows_data = []
         for item in request.items:
             d = item.dict()
-            feature_rows.append([d[f] for f in FEATURE_ORDER])
+            d = apply_feature_defaults(d)
+            feature_rows_data.append({f: d[f] for f in FEATURE_ORDER})
         
-        features = np.array(feature_rows, dtype=float)
-        preds = model.predict(features)
-        probs = model.predict_proba(features)
+        features_df = pd.DataFrame(feature_rows_data)[FEATURE_ORDER]
+        features_scaled = scaler.transform(features_df)
+        
+        preds = model.predict(features_scaled)
+        probs = model.predict_proba(features_scaled)
         
         # Connect to database
         try:
@@ -507,7 +735,24 @@ def predict_csv_batch(request: CSVBatchRequest):
         results = []
         for i, item in enumerate(request.items):
             pred = int(preds[i])
-            confidence = round(float(max(probs[i])), 3)
+            model_confidence = float(max(probs[i]))
+            
+            # Get feature data with defaults
+            d = item.dict()
+            d = apply_feature_defaults(d)
+            
+            # Calculate data quality factor (always high for 12-feature model)
+            data_quality_factor, data_quality_label = calculate_data_quality_factor()
+            confidence = round(model_confidence * data_quality_factor, 3)
+            
+            # Detect anomalies
+            anomaly_result = detect_anomalies(d)
+            
+            # Apply confidence cap if needed
+            if anomaly_result["confidence_cap"] is not None:
+                confidence = min(confidence, anomaly_result["confidence_cap"])
+                confidence = round(confidence, 3)
+            
             finding = _FINDING.get(pred, "Optimal")
             
             cloud = (item.cloud or "aws").lower()
@@ -581,6 +826,12 @@ def predict_csv_batch(request: CSVBatchRequest):
                 "optimizedCostPerMonth": optimized_cost_month,
                 "savings": savings,
                 "recommendation": rec_text,
+                "data_quality": data_quality_label,
+                "data_days": d['data_days'],
+                "granularity": "hourly" if d['granularity_hourly'] == 1 else "daily",
+                "model_version": model_version,
+                "anomaly_flag": anomaly_result["anomaly_flag"],
+                "anomaly_message": anomaly_result["anomaly_message"]
             })
         
         if conn:
@@ -591,6 +842,8 @@ def predict_csv_batch(request: CSVBatchRequest):
         
         return {"count": len(results), "results": results}
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

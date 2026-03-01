@@ -9,6 +9,7 @@ import CSVLayout from "./layouts/CSVLayout";
 import AuthLayout from "./layouts/AuthLayout";
 
 // Public Pages
+import Landing from "./pages/Landing";
 import ModeSelection from "./pages/mode/ModeSelection";
 import Login from "./pages/auth/Login";
 import Signup from "./pages/auth/Signup";
@@ -112,8 +113,9 @@ export default function App() {
         <BrowserRouter>
           <Routes>
             {/* Public Routes */}
-            <Route path="/" element={<ModeSelection />} />
+            <Route path="/" element={<Landing />} />
             <Route path="/mode" element={<ModeSelection />} />
+            <Route path="/help" element={<Help />} />
 
             <Route path="/auth" element={<AuthLayout />}>
               <Route path="login" element={<Login />} />
@@ -140,11 +142,6 @@ export default function App() {
             {/* Common Settings Route (accessible from both modes) */}
             <Route path="/settings" element={<ProtectedRoute><CloudLayout /></ProtectedRoute>}>
               <Route index element={<Settings />} />
-            </Route>
-
-            {/* Help/Documentation Route (accessible from both modes) */}
-            <Route path="/help" element={<ProtectedRoute><CloudLayout /></ProtectedRoute>}>
-              <Route index element={<Help />} />
             </Route>
 
             {/* Catch all - redirect to mode selection */}

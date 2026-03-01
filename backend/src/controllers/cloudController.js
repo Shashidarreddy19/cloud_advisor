@@ -5,12 +5,20 @@ const gcpService = require('../services/gcpService');
 const Resource = require('../models/Resource'); // For getResources
 const User = require('../models/User');
 const logger = require('../utils/logger');
+const recommendationEngine = require('../services/recommendationEngine');
 
-const saveConfig = async (req, res) => {
+/**
+ * Test cloud connection without saving credentials
+ * Returns connection_status, missing_permissions, and impact
+ */
+const testConnection = async (req, res) => {
     try {
-        const { userId, provider, credentials } = req.body;
+        const { provider, credentials } = req.body;
 
-        // Test connection and get warnings
+        if (!provider || !credentials) {
+            return res.status(400).json({ error: "Missing provider or credentials" });
+        }
+
         let connectionResult;
         if (provider === 'AWS') {
             connectionResult = await awsService.testConnection(credentials);
@@ -22,7 +30,42 @@ const saveConfig = async (req, res) => {
             return res.status(400).json({ error: "Unknown provider" });
         }
 
-        // Save config with warnings
+        // Return enhanced connection status
+        res.json({
+            success: connectionResult.success,
+            message: connectionResult.message,
+            connection_status: connectionResult.connection_status,
+            missing_permissions: connectionResult.missing_permissions || [],
+            impact: connectionResult.impact || []
+        });
+    } catch (error) {
+        logger.error("Test Connection Error:", error);
+        res.status(400).json({
+            error: error.message,
+            connection_status: 'failed',
+            missing_permissions: [],
+            impact: []
+        });
+    }
+};
+
+const saveConfig = async (req, res) => {
+    try {
+        const { userId, provider, credentials } = req.body;
+
+        // Test connection and get enhanced status
+        let connectionResult;
+        if (provider === 'AWS') {
+            connectionResult = await awsService.testConnection(credentials);
+        } else if (provider === 'Azure') {
+            connectionResult = await azureService.testConnection(credentials);
+        } else if (provider === 'GCP') {
+            connectionResult = await gcpService.testConnection(credentials);
+        } else {
+            return res.status(400).json({ error: "Unknown provider" });
+        }
+
+        // Save config with enhanced connection status
         const config = await CloudConfig.findOneAndUpdate(
             { userId, provider },
             {
@@ -30,7 +73,10 @@ const saveConfig = async (req, res) => {
                 status: 'CONNECTED',
                 lastChecked: Date.now(),
                 warnings: connectionResult.warnings || [],
-                limitedAccess: connectionResult.limitedAccess || false
+                limitedAccess: connectionResult.limitedAccess || false,
+                connection_status: connectionResult.connection_status || 'full',
+                missing_permissions: connectionResult.missing_permissions || [],
+                impact: connectionResult.impact || []
             },
             { upsert: true, new: true }
         );
@@ -60,7 +106,10 @@ const saveConfig = async (req, res) => {
             config,
             message: connectionResult.message,
             warnings: connectionResult.warnings,
-            limitedAccess: connectionResult.limitedAccess
+            limitedAccess: connectionResult.limitedAccess,
+            connection_status: connectionResult.connection_status,
+            missing_permissions: connectionResult.missing_permissions,
+            impact: connectionResult.impact
         });
     } catch (error) {
         console.error("Save Config Error:", error);
@@ -90,6 +139,65 @@ const syncResources = async (req, res) => {
         res.json({ success: true, message: "Sync triggered" });
     } catch (error) {
         logger.error(`Sync error: ${error.message}`);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+/**
+ * Fetch cloud resources and return immediately (for localStorage)
+ * Does NOT save to MongoDB - returns data directly to frontend
+ */
+const fetchCloudResources = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id);
+        if (!user) {
+            return res.status(401).json({ error: "User not found" });
+        }
+
+        logger.info(`🔄 [FETCH] Fetching cloud resources for user ${user._id} (localStorage mode)`);
+
+        const configs = await CloudConfig.find({ userId: user._id, status: 'CONNECTED' });
+
+        if (configs.length === 0) {
+            logger.warn(`No connected cloud configs found for user ${user._id}`);
+            return res.json({ success: true, resources: [], message: "No connected clouds" });
+        }
+
+        logger.info(`Found ${configs.length} connected cloud(s) for user ${user._id}`);
+
+        // Fetch resources from all connected clouds in parallel
+        const fetchPromises = configs.map(async (config) => {
+            try {
+                logger.info(`Fetching from ${config.provider}...`);
+
+                if (config.provider === 'AWS') {
+                    return await awsService.fetchResourcesSync(user._id, config.credentials);
+                } else if (config.provider === 'Azure') {
+                    return await azureService.fetchResourcesSync(user._id, config.credentials);
+                } else if (config.provider === 'GCP') {
+                    return await gcpService.fetchResourcesSync(user._id, config.credentials);
+                }
+
+                return [];
+            } catch (error) {
+                logger.error(`Error fetching from ${config.provider}: ${error.message}`);
+                return [];
+            }
+        });
+
+        const results = await Promise.all(fetchPromises);
+        const allResources = results.flat();
+
+        logger.info(`✅ [FETCH] Fetched ${allResources.length} resources total (not saved to DB)`);
+
+        res.json({
+            success: true,
+            resources: allResources,
+            count: allResources.length,
+            message: `Fetched ${allResources.length} resources`
+        });
+    } catch (error) {
+        logger.error(`Fetch error: ${error.message}`);
         res.status(500).json({ error: error.message });
     }
 };
@@ -156,7 +264,10 @@ const getConfig = async (req, res) => {
                 lastChecked: config.lastChecked,
                 credentials: safeCreds,
                 warnings: config.warnings || [],
-                limitedAccess: config.limitedAccess || false
+                limitedAccess: config.limitedAccess || false,
+                connection_status: config.connection_status || 'full',
+                missing_permissions: config.missing_permissions || [],
+                impact: config.impact || []
             };
         });
 
@@ -186,8 +297,54 @@ const getResourcesByUserId = async (req, res) => {
     try {
         const { userId } = req.params;
         const resources = await Resource.find({ userId });
-        res.json({ success: true, resources });
+
+        // Generate recommendations for each resource
+        const resourcesWithRecommendations = resources.map(resource => {
+            try {
+                const resourceObj = resource.toObject();
+
+                // Log resource data for debugging
+                logger.info(`[Recommendation] Processing ${resourceObj.resourceId}:`);
+                logger.info(`  State: ${resourceObj.state}`);
+                logger.info(`  Running hours: ${resourceObj.running_hours_last_14d}`);
+                logger.info(`  CPU avg: ${resourceObj.cpu_avg}, p95: ${resourceObj.cpu_p95}`);
+                logger.info(`  Memory avg: ${resourceObj.memory_avg}, p95: ${resourceObj.memory_p95}`);
+                logger.info(`  Memory source: ${resourceObj.memory_metrics_source}`);
+                logger.info(`  Metrics window: ${resourceObj.metrics_window_days} days`);
+
+                // Generate recommendation using the recommendation engine
+                const recommendationResult = recommendationEngine.generateRecommendation(resourceObj);
+
+                logger.info(`[Recommendation] Result for ${resourceObj.resourceId}:`);
+                logger.info(`  Recommendation: ${recommendationResult.recommendation}`);
+                logger.info(`  Confidence: ${recommendationResult.confidence}`);
+                logger.info(`  Warnings: ${JSON.stringify(recommendationResult.warnings)}`);
+
+                // Add recommendation fields to resource
+                return {
+                    ...resourceObj,
+                    recommendation: recommendationResult.recommendation,
+                    confidence: recommendationResult.confidence,
+                    recommendation_warnings: recommendationResult.warnings || [],
+                    metrics_window_days: recommendationResult.metrics_window_days,
+                    memory_status: recommendationResult.memory_status
+                };
+            } catch (error) {
+                logger.error(`Failed to generate recommendation for resource ${resource.resourceId}:`, error.message);
+                // Return resource without recommendation on error
+                return {
+                    ...resource.toObject(),
+                    recommendation: null,
+                    confidence: null,
+                    recommendation_warnings: [],
+                    error: error.message
+                };
+            }
+        });
+
+        res.json({ success: true, resources: resourcesWithRecommendations });
     } catch (error) {
+        logger.error('getResourcesByUserId error:', error);
         res.status(500).json({ error: error.message });
     }
 };
@@ -238,7 +395,10 @@ const getConfigByUserId = async (req, res) => {
                 lastChecked: config.lastChecked,
                 credentials: safeCreds,
                 warnings: config.warnings || [],
-                limitedAccess: config.limitedAccess || false
+                limitedAccess: config.limitedAccess || false,
+                connection_status: config.connection_status || 'full',
+                missing_permissions: config.missing_permissions || [],
+                impact: config.impact || []
             };
         });
 
@@ -320,7 +480,21 @@ const getResourceById = async (req, res) => {
             return res.status(404).json({ success: false, error: "Resource not found" });
         }
 
-        res.json({ success: true, resource });
+        // Fetch cloud connection info to include connection_status and missing_permissions
+        const cloudConfig = await CloudConfig.findOne({
+            userId: resource.userId,
+            provider: resource.provider
+        });
+
+        const response = {
+            success: true,
+            resource: resource.toObject(),
+            connection_status: cloudConfig?.connection_status || 'unknown',
+            missing_permissions: cloudConfig?.missing_permissions || [],
+            impact: cloudConfig?.impact || []
+        };
+
+        res.json(response);
     } catch (error) {
         logger.error(`Failed to get resource by ID: ${error.message}`);
         res.status(500).json({ success: false, error: error.message });
@@ -351,9 +525,37 @@ const pollInstanceStates = async (req, res) => {
     }
 };
 
+/**
+ * Validate cloud credentials for current user
+ */
+const validateCredentials = async (req, res) => {
+    try {
+        const user = await User.findById(req.user._id);
+        if (!user) {
+            return res.status(401).json({ error: "User not found" });
+        }
+
+        const { validateUserConnections } = require('../services/credentialValidationService');
+        const result = await validateUserConnections(user._id);
+
+        res.json({
+            success: true,
+            message: 'Credential validation complete',
+            valid: result.valid,
+            invalid: result.invalid,
+            disconnected: result.disconnected
+        });
+    } catch (error) {
+        logger.error("Validate Credentials Error:", error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
 module.exports = {
+    testConnection,
     saveConfig,
     syncResources,
+    fetchCloudResources, // NEW: Fetch and return (localStorage mode)
     deleteConfig,
     getResources,
     getResourcesByUserId,
@@ -362,5 +564,6 @@ module.exports = {
     getConfigByUserId,
     analyzeResources,
     fetchAwsRegions,
-    pollInstanceStates // NEW: On-demand polling
+    pollInstanceStates, // NEW: On-demand polling
+    validateCredentials // NEW: Manual credential validation
 };

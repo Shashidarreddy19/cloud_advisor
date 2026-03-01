@@ -6,6 +6,8 @@ const logger = require('./utils/logger');
 const { errorHandler } = require('./middleware/errorHandler');
 const { startCleanupJob } = require('./services/cleanupService');
 const { startPolling: startInstanceStatePolling } = require('./services/instanceStatePollingService');
+const { startPeriodicValidation, stopPeriodicValidation } = require('./services/credentialValidationService');
+const geminiService = require('./services/geminiService');
 
 // Routes
 const authRoutes = require('./routes/authRoutes');
@@ -77,8 +79,11 @@ app.use((req, res) => {
 app.use(errorHandler);
 
 // Start Server
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     logger.info(`Server running on port ${PORT}`);
+
+    // Initialize Gemini AI service
+    geminiService.initialize();
 
     // Start background cleanup job
     startCleanupJob();
@@ -86,4 +91,25 @@ app.listen(PORT, () => {
     // Start instance state polling (every 30 seconds)
     startInstanceStatePolling();
     logger.info('Instance state polling service started');
+
+    // Start periodic credential validation (every 5 minutes)
+    startPeriodicValidation();
+    logger.info('Credential validation service started');
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    logger.info('SIGTERM signal received: closing HTTP server');
+    stopPeriodicValidation();
+    server.close(() => {
+        logger.info('HTTP server closed');
+    });
+});
+
+process.on('SIGINT', () => {
+    logger.info('SIGINT signal received: closing HTTP server');
+    stopPeriodicValidation();
+    server.close(() => {
+        logger.info('HTTP server closed');
+    });
 });

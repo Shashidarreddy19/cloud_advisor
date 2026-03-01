@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Cloud, CheckCircle, AlertCircle, Shield, Server, Database, X, Trash2, Loader2 } from 'lucide-react';
-import api from '../../services/api';
+import api, { cloudApi } from '../../services/api';
 import Toast from '../../components/common/Toast';
 import ErrorModal from '../../components/common/ErrorModal';
 import { useNavigate } from 'react-router-dom';
@@ -16,7 +16,10 @@ function ModalField({ label, children }) {
 }
 
 /* ─── Provider Card ─── */
-function ProviderCard({ icon: Icon, iconBg, iconColor, name, description, isConnected, accentColor, onConnect, onDisconnect, isConnecting }) {
+function ProviderCard({ icon: Icon, iconBg, iconColor, name, description, isConnected, connectionStatus, missingPermissions, impact, accentColor, onConnect, onDisconnect, isConnecting }) {
+    const isPartialAccess = connectionStatus === 'partial';
+    const isFailed = connectionStatus === 'failed';
+
     return (
         <div style={{ background: '#fff', border: `1px solid ${isConnected ? accentColor : 'var(--az-border)'}`, borderRadius: 6, display: 'flex', flexDirection: 'column', overflow: 'hidden', transition: 'border-color 0.15s, box-shadow 0.15s' }}
             onMouseEnter={e => { if (!isConnected) { e.currentTarget.style.borderColor = accentColor; e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.08)'; } }}
@@ -28,17 +31,47 @@ function ProviderCard({ icon: Icon, iconBg, iconColor, name, description, isConn
                         <Icon size={28} style={{ color: iconColor }} />
                     </div>
                     {isConnected && (
-                        <div style={{ position: 'absolute', top: -2, right: -4, width: 18, height: 18, background: 'var(--az-success)', borderRadius: '50%', border: '2px solid #fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                            <CheckCircle size={10} style={{ color: '#fff' }} />
+                        <div style={{ position: 'absolute', top: -2, right: -4, width: 18, height: 18, background: isPartialAccess ? 'var(--az-warning)' : 'var(--az-success)', borderRadius: '50%', border: '2px solid #fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            {isPartialAccess ? <AlertCircle size={10} style={{ color: '#fff' }} /> : <CheckCircle size={10} style={{ color: '#fff' }} />}
                         </div>
                     )}
                 </div>
                 <h3 style={{ margin: '0 0 6px 0', fontSize: 15, fontWeight: 600, color: 'var(--az-text)' }}>{name}</h3>
                 <p style={{ margin: 0, fontSize: 12, color: 'var(--az-text-2)', lineHeight: 1.5 }}>{description}</p>
                 {isConnected && (
-                    <span style={{ marginTop: 10, background: 'var(--az-success-bg)', color: 'var(--az-success)', padding: '2px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-                        <CheckCircle size={10} />Connected
-                    </span>
+                    <>
+                        <span style={{
+                            marginTop: 10,
+                            background: isPartialAccess ? 'var(--az-warning-bg)' : 'var(--az-success-bg)',
+                            color: isPartialAccess ? 'var(--az-warning)' : 'var(--az-success)',
+                            padding: '2px 10px',
+                            borderRadius: 12,
+                            fontSize: 11,
+                            fontWeight: 600,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 4
+                        }}>
+                            {isPartialAccess ? <><AlertCircle size={10} />Partial Access</> : <><CheckCircle size={10} />Full Access</>}
+                        </span>
+                        {isPartialAccess && missingPermissions && missingPermissions.length > 0 && (
+                            <div style={{ marginTop: 10, width: '100%', background: 'var(--az-warning-bg)', border: '1px solid var(--az-warning)', borderRadius: 4, padding: '8px 10px', textAlign: 'left' }}>
+                                <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--az-warning)', marginBottom: 4 }}>Missing Permissions:</div>
+                                <ul style={{ margin: 0, paddingLeft: 16, fontSize: 10, color: 'var(--az-text-2)', lineHeight: 1.4 }}>
+                                    {missingPermissions.slice(0, 3).map((perm, idx) => (
+                                        <li key={idx}>{perm}</li>
+                                    ))}
+                                    {missingPermissions.length > 3 && <li>+{missingPermissions.length - 3} more...</li>}
+                                </ul>
+                                {impact && impact.length > 0 && (
+                                    <div style={{ marginTop: 6, fontSize: 10, color: 'var(--az-text-3)' }}>
+                                        <strong>Impact:</strong> {impact.slice(0, 2).join(', ')}
+                                        {impact.length > 2 && `, +${impact.length - 2} more`}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </>
                 )}
             </div>
             {/* Card footer */}
@@ -100,6 +133,7 @@ export default function CloudConnect() {
     const [toastState, setToastState] = useState(null);
     const [connectedConfig, setConnectedConfig] = useState({});
     const [errorModal, setErrorModal] = useState(null); // { error, provider }
+    const [validating, setValidating] = useState(false);
 
     const [showAwsModal, setShowAwsModal] = useState(false);
     const [awsCredentials, setAwsCredentials] = useState({ accessKeyId: '', secretAccessKey: '', region: 'us-east-1' });
@@ -114,6 +148,15 @@ export default function CloudConnect() {
     const [gcpCredentials, setGcpCredentials] = useState({ serviceAccountJson: '', fileName: '' });
 
     useEffect(() => { fetchConfig(); }, []);
+
+    // Poll for connection status changes every 30 seconds
+    useEffect(() => {
+        const interval = setInterval(() => {
+            fetchConfig();
+        }, 30000); // 30 seconds
+
+        return () => clearInterval(interval);
+    }, []);
 
     // Auto-fetch regions when both access key and secret key are provided
     useEffect(() => {
@@ -159,8 +202,63 @@ export default function CloudConnect() {
             const res = await api.get('/cloud/config');
             const configMap = {};
             res.data.forEach(c => { configMap[c.provider] = c; });
+
+            // Check if any previously connected providers are now missing (auto-disconnected)
+            const previousProviders = Object.keys(connectedConfig);
+            const currentProviders = Object.keys(configMap);
+            const disconnectedProviders = previousProviders.filter(p => !currentProviders.includes(p));
+
+            if (disconnectedProviders.length > 0) {
+                disconnectedProviders.forEach(provider => {
+                    setToastState({
+                        message: `🔒 ${provider} credentials have been deleted or revoked and were automatically disconnected`,
+                        type: 'error'
+                    });
+                });
+            }
+
             setConnectedConfig(configMap);
         } catch (e) { console.error('Failed to fetch config', e); }
+    };
+
+    const handleValidateCredentials = async () => {
+        setValidating(true);
+        try {
+            const response = await api.post('/cloud/validate');
+            const { valid, invalid, disconnected } = response.data;
+
+            if (disconnected.length > 0) {
+                const providers = disconnected.map(d => d.provider).join(', ');
+                setToastState({
+                    message: `🔒 ${providers} credentials have been deleted or revoked and were automatically disconnected`,
+                    type: 'error'
+                });
+                await fetchConfig();
+            } else if (invalid.length > 0) {
+                const providers = invalid.map(i => i.provider).join(', ');
+                setToastState({
+                    message: `${providers} credentials have validation issues`,
+                    type: 'warning'
+                });
+            } else if (valid.length > 0) {
+                setToastState({
+                    message: 'All credentials are valid',
+                    type: 'success'
+                });
+            } else {
+                setToastState({
+                    message: 'No connected cloud accounts to validate',
+                    type: 'info'
+                });
+            }
+        } catch (e) {
+            setToastState({
+                message: e.response?.data?.error || 'Failed to validate credentials',
+                type: 'error'
+            });
+        } finally {
+            setValidating(false);
+        }
     };
 
     const handleConnect = (p) => {
@@ -200,9 +298,11 @@ export default function CloudConnect() {
                 region: awsCredentials.region
             };
 
-            await api.post('/cloud/config', { userId, provider: 'AWS', credentials: trimmedCredentials });
-            setToastState({ message: 'Successfully connected to AWS!', type: 'success' });
+            // Use cloudApi with longer timeout for cloud connections
+            await cloudApi.post('/cloud/config', { userId, provider: 'AWS', credentials: trimmedCredentials });
+            setToastState({ message: 'AWS connected! Fetching resources from all regions...', type: 'success' });
             setShowAwsModal(false);
+            // Redirect immediately - resources will appear as they're fetched
             setTimeout(() => navigate('/cloud/dashboard'), 1500);
         } catch (e) {
             // Show detailed error modal instead of toast
@@ -217,7 +317,9 @@ export default function CloudConnect() {
         try {
             const userId = localStorage.getItem('userId');
             if (!userId) { setToastState({ message: 'Session expired. Please log in.', type: 'error' }); setTimeout(() => navigate('/auth/login'), 2000); return; }
-            const response = await api.post('/cloud/config', { userId, provider, credentials });
+
+            // Use cloudApi with longer timeout for cloud connections
+            const response = await cloudApi.post('/cloud/config', { userId, provider, credentials });
             const { message, warnings, limitedAccess } = response.data;
             let msg = message || `Successfully connected to ${provider}!`;
             if (limitedAccess && warnings?.length > 0) {
@@ -245,13 +347,79 @@ export default function CloudConnect() {
                 </div>
                 <h1 style={{ margin: '0 0 6px 0', fontSize: 22, fontWeight: 600, color: 'var(--az-text)' }}>Connect Your Cloud</h1>
                 <p style={{ margin: 0, fontSize: 13, color: 'var(--az-text-2)' }}>Select a provider to start monitoring your infrastructure. We only request <strong>read-only</strong> permissions.</p>
+
+                {/* Validation button */}
+                {Object.keys(connectedConfig).length > 0 && (
+                    <div style={{ marginTop: 12 }}>
+                        <button
+                            onClick={handleValidateCredentials}
+                            disabled={validating}
+                            className="az-btn az-btn-secondary"
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                        >
+                            {validating ? (
+                                <>
+                                    <Loader2 size={13} className="az-spin" />
+                                    Validating...
+                                </>
+                            ) : (
+                                <>
+                                    <CheckCircle size={13} />
+                                    Validate All Credentials
+                                </>
+                            )}
+                        </button>
+                    </div>
+                )}
             </div>
 
             {/* Provider cards */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-                <ProviderCard icon={Server} iconBg="#FFF4E5" iconColor="#FF9900" name="Amazon Web Services" description="Connect via IAM Role or Access Keys." isConnected={connectedConfig['AWS']?.status === 'CONNECTED'} accentColor="#FF9900" onConnect={() => handleConnect('aws')} onDisconnect={() => handleDisconnect('AWS')} isConnecting={connecting === 'aws'} />
-                <ProviderCard icon={Database} iconBg="var(--az-blue-light)" iconColor="var(--az-blue)" name="Microsoft Azure" description="Connect via Service Principal." isConnected={connectedConfig['Azure']?.status === 'CONNECTED'} accentColor="var(--az-blue)" onConnect={() => handleConnect('azure')} onDisconnect={() => handleDisconnect('Azure')} isConnecting={connecting === 'azure'} />
-                <ProviderCard icon={Cloud} iconBg="#EEF2FF" iconColor="#4285F4" name="Google Cloud" description="Connect via Service Account JSON." isConnected={connectedConfig['GCP']?.status === 'CONNECTED'} accentColor="#4285F4" onConnect={() => handleConnect('gcp')} onDisconnect={() => handleDisconnect('GCP')} isConnecting={connecting === 'gcp'} />
+                <ProviderCard
+                    icon={Server}
+                    iconBg="#FFF4E5"
+                    iconColor="#FF9900"
+                    name="Amazon Web Services"
+                    description="Connect via IAM Role or Access Keys."
+                    isConnected={connectedConfig['AWS']?.status === 'CONNECTED'}
+                    connectionStatus={connectedConfig['AWS']?.connection_status}
+                    missingPermissions={connectedConfig['AWS']?.missing_permissions}
+                    impact={connectedConfig['AWS']?.impact}
+                    accentColor="#FF9900"
+                    onConnect={() => handleConnect('aws')}
+                    onDisconnect={() => handleDisconnect('AWS')}
+                    isConnecting={connecting === 'aws'}
+                />
+                <ProviderCard
+                    icon={Database}
+                    iconBg="var(--az-blue-light)"
+                    iconColor="var(--az-blue)"
+                    name="Microsoft Azure"
+                    description="Connect via Service Principal."
+                    isConnected={connectedConfig['Azure']?.status === 'CONNECTED'}
+                    connectionStatus={connectedConfig['Azure']?.connection_status}
+                    missingPermissions={connectedConfig['Azure']?.missing_permissions}
+                    impact={connectedConfig['Azure']?.impact}
+                    accentColor="var(--az-blue)"
+                    onConnect={() => handleConnect('azure')}
+                    onDisconnect={() => handleDisconnect('Azure')}
+                    isConnecting={connecting === 'azure'}
+                />
+                <ProviderCard
+                    icon={Cloud}
+                    iconBg="#EEF2FF"
+                    iconColor="#4285F4"
+                    name="Google Cloud"
+                    description="Connect via Service Account JSON."
+                    isConnected={connectedConfig['GCP']?.status === 'CONNECTED'}
+                    connectionStatus={connectedConfig['GCP']?.connection_status}
+                    missingPermissions={connectedConfig['GCP']?.missing_permissions}
+                    impact={connectedConfig['GCP']?.impact}
+                    accentColor="#4285F4"
+                    onConnect={() => handleConnect('gcp')}
+                    onDisconnect={() => handleDisconnect('GCP')}
+                    isConnecting={connecting === 'gcp'}
+                />
             </div>
 
             {/* Security info bar */}
@@ -429,7 +597,7 @@ export default function CloudConnect() {
                             </select>
                         </ModalField>
                         <button type="submit" disabled={connecting === 'aws'} className="az-btn az-btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: 8, background: '#FF9900', borderColor: '#FF9900' }}>
-                            {connecting === 'aws' ? <><Loader2 size={14} className="az-spin" />Verifying...</> : 'Connect AWS Account'}
+                            {connecting === 'aws' ? <><Loader2 size={14} className="az-spin" />Verifying credentials (may take up to 45s)...</> : 'Connect AWS Account'}
                         </button>
                     </form>
                 </Modal>
@@ -445,7 +613,7 @@ export default function CloudConnect() {
                         <ModalField label="Client Secret"><input type="password" name="clientSecret" value={azureCredentials.clientSecret} onChange={e => setAzureCredentials({ ...azureCredentials, clientSecret: e.target.value })} className="az-input" style={inputStyle} required /></ModalField>
                         <ModalField label="Subscription ID"><input type="text" name="subscriptionId" value={azureCredentials.subscriptionId} onChange={e => setAzureCredentials({ ...azureCredentials, subscriptionId: e.target.value })} className="az-input" style={inputStyle} required /></ModalField>
                         <button type="submit" disabled={connecting === 'azure'} className="az-btn az-btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: 8 }}>
-                            {connecting === 'azure' ? <><Loader2 size={14} className="az-spin" />Verifying...</> : 'Connect Azure Account'}
+                            {connecting === 'azure' ? <><Loader2 size={14} className="az-spin" />Verifying credentials (may take up to 45s)...</> : 'Connect Azure Account'}
                         </button>
                     </form>
                 </Modal>
@@ -482,7 +650,7 @@ export default function CloudConnect() {
                             </div>
                         </ModalField>
                         <button type="submit" disabled={connecting === 'gcp' || !gcpCredentials.serviceAccountJson} className="az-btn az-btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: 8, background: '#4285F4', borderColor: '#4285F4' }}>
-                            {connecting === 'gcp' ? <><Loader2 size={14} className="az-spin" />Verifying...</> : 'Connect GCP Account'}
+                            {connecting === 'gcp' ? <><Loader2 size={14} className="az-spin" />Verifying credentials (may take up to 45s)...</> : 'Connect GCP Account'}
                         </button>
                     </form>
                 </Modal>
