@@ -19,7 +19,7 @@ export default function Login() {
     const [touched, setTouched] = useState({ email: false, password: false });
 
     useEffect(() => {
-        if (localStorage.getItem('token')) navigate('/mode');
+        if (localStorage.getItem('token')) navigate('/cloud/dashboard');
     }, [navigate]);
 
     const handleChange = (e) => {

@@ -10,7 +10,6 @@ import AuthLayout from "./layouts/AuthLayout";
 
 // Public Pages
 import Landing from "./pages/Landing";
-import ModeSelection from "./pages/mode/ModeSelection";
 import Login from "./pages/auth/Login";
 import Signup from "./pages/auth/Signup";
 
@@ -114,7 +113,6 @@ export default function App() {
           <Routes>
             {/* Public Routes */}
             <Route path="/" element={<Landing />} />
-            <Route path="/mode" element={<ModeSelection />} />
             <Route path="/help" element={<Help />} />
 
             <Route path="/auth" element={<AuthLayout />}>
@@ -129,6 +127,7 @@ export default function App() {
               <Route path="instances" element={<Instances />} />
               <Route path="buckets" element={<Buckets />} />
               <Route path="resource/:id" element={<ResourceDetail />} />
+              <Route path="help" element={<Help />} />
             </Route>
 
             {/* CSV Mode Routes */}
@@ -137,6 +136,7 @@ export default function App() {
               <Route path="upload" element={<UploadCSV />} />
               <Route path="recommendations" element={<Recommendations />} />
               <Route path="reports" element={<Reports />} />
+              <Route path="help" element={<Help />} />
             </Route>
 
             {/* Common Settings Route (accessible from both modes) */}
@@ -144,7 +144,7 @@ export default function App() {
               <Route index element={<Settings />} />
             </Route>
 
-            {/* Catch all - redirect to mode selection */}
+            {/* Catch all - redirect to landing */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>

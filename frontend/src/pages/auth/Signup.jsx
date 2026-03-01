@@ -121,7 +121,7 @@ export default function Signup() {
                 localStorage.setItem('token', response.data.token);
                 localStorage.setItem('user', formData.username);
                 localStorage.setItem('userId', response.data.userId);
-                navigate('/mode');
+                navigate('/cloud/dashboard');
             } else {
                 navigate('/auth/login');
             }

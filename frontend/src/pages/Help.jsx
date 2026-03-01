@@ -1,9 +1,7 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { HelpCircle, Cloud, Upload, FileText, ChevronRight, CheckCircle, Info } from 'lucide-react';
 
 export default function Help() {
-    const navigate = useNavigate();
     const [activeSection, setActiveSection] = useState('getting-started');
     const [selectedCloud, setSelectedCloud] = useState('aws');
 
@@ -15,53 +13,31 @@ export default function Help() {
     ];
 
     return (
-        <div className="min-h-screen bg-gray-50">
-            {/* Public Navigation Header */}
-            <nav className="flex justify-between items-center px-16 py-4 bg-white border-b border-gray-200">
-                <div onClick={() => navigate('/')} className="cursor-pointer">
-                    <img src="/logo.png" alt="Cloud Optimizer" className="h-10" />
+        <div style={{ display: 'flex', height: 'calc(100vh - var(--az-navbar-h))', background: 'var(--az-bg)' }}>
+            <div style={{ width: 240, background: 'var(--az-card)', borderRight: '1px solid var(--az-border)', padding: '20px 0', overflowY: 'auto' }}>
+                <div style={{ padding: '0 20px', marginBottom: 20 }}>
+                    <h2 style={{ fontSize: 18, fontWeight: 600, color: 'var(--az-text)', margin: 0 }}>Help Center</h2>
                 </div>
-
-                <div className="flex gap-3 items-center">
-                    <button onClick={() => navigate('/')} className="px-5 py-2 text-gray-700 text-sm font-medium hover:text-teal-600 transition-colors">
-                        Home
+                {sections.map(({ id, label, icon: Icon }) => (
+                    <button key={id} onClick={() => setActiveSection(id)} style={{
+                        width: '100%', padding: '12px 20px', border: 'none',
+                        background: activeSection === id ? 'var(--az-blue-light)' : 'transparent',
+                        color: activeSection === id ? 'var(--az-blue)' : 'var(--az-text-2)',
+                        textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center',
+                        gap: 10, fontSize: 14, fontWeight: activeSection === id ? 600 : 400,
+                        transition: 'all 0.15s', fontFamily: 'inherit',
+                        borderLeft: activeSection === id ? '3px solid var(--az-blue)' : '3px solid transparent'
+                    }}>
+                        <Icon size={18} />{label}
                     </button>
-                    <button onClick={() => navigate('/auth/login')} className="px-5 py-2 text-gray-700 text-sm font-medium hover:text-teal-600 transition-colors">
-                        Sign In
-                    </button>
-                    <button onClick={() => navigate('/auth/signup')} className="px-5 py-2 bg-teal-500 rounded-md text-white text-sm font-semibold hover:bg-teal-600 transition-all">
-                        Get Started Free
-                    </button>
-                </div>
-            </nav>
-
-            {/* Help Content */}
-            <div style={{ display: 'flex', height: 'calc(100vh - 73px)', background: 'var(--az-bg)' }}>
-                <div style={{ width: 240, background: 'var(--az-card)', borderRight: '1px solid var(--az-border)', padding: '20px 0', overflowY: 'auto' }}>
-                    <div style={{ padding: '0 20px', marginBottom: 20 }}>
-                        <h2 style={{ fontSize: 18, fontWeight: 600, color: 'var(--az-text)', margin: 0 }}>Help Center</h2>
-                    </div>
-                    {sections.map(({ id, label, icon: Icon }) => (
-                        <button key={id} onClick={() => setActiveSection(id)} style={{
-                            width: '100%', padding: '12px 20px', border: 'none',
-                            background: activeSection === id ? 'var(--az-blue-light)' : 'transparent',
-                            color: activeSection === id ? 'var(--az-blue)' : 'var(--az-text-2)',
-                            textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center',
-                            gap: 10, fontSize: 14, fontWeight: activeSection === id ? 600 : 400,
-                            transition: 'all 0.15s', fontFamily: 'inherit',
-                            borderLeft: activeSection === id ? '3px solid var(--az-blue)' : '3px solid transparent'
-                        }}>
-                            <Icon size={18} />{label}
-                        </button>
-                    ))}
-                </div>
-                <div style={{ flex: 1, overflowY: 'auto', padding: 40 }}>
-                    <div style={{ maxWidth: 900 }}>
-                        {activeSection === 'getting-started' && <GettingStarted />}
-                        {activeSection === 'cloud-connection' && <CloudConnection selectedCloud={selectedCloud} setSelectedCloud={setSelectedCloud} />}
-                        {activeSection === 'csv-upload' && <CSVUpload />}
-                        {activeSection === 'faq' && <FAQ />}
-                    </div>
+                ))}
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', padding: 40 }}>
+                <div style={{ maxWidth: 900 }}>
+                    {activeSection === 'getting-started' && <GettingStarted />}
+                    {activeSection === 'cloud-connection' && <CloudConnection selectedCloud={selectedCloud} setSelectedCloud={setSelectedCloud} />}
+                    {activeSection === 'csv-upload' && <CSVUpload />}
+                    {activeSection === 'faq' && <FAQ />}
                 </div>
             </div>
         </div>

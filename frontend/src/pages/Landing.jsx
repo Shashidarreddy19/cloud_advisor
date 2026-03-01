@@ -1,8 +1,48 @@
 import { useNavigate } from 'react-router-dom';
-import { Shield, Eye, CheckCircle, Cloud, BarChart3, Activity, Lock, FileText, ArrowRight, AlertCircle, Cpu } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Shield, Eye, CheckCircle, Cloud, BarChart3, Activity, Lock, FileText, ArrowRight, AlertCircle, Cpu, ChevronDown, LogOut, LayoutDashboard } from 'lucide-react';
 
 export default function Landing() {
     const navigate = useNavigate();
+    const [isAuthenticated, setIsAuthenticated] = useState(false);
+    const [username, setUsername] = useState('');
+    const [userMenuOpen, setUserMenuOpen] = useState(false);
+    const userMenuRef = useRef(null);
+
+    useEffect(() => {
+        const token = localStorage.getItem('token');
+        const user = localStorage.getItem('user');
+        if (token && user) {
+            setIsAuthenticated(true);
+            setUsername(user);
+        }
+    }, []);
+
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
+                setUserMenuOpen(false);
+            }
+        };
+
+        if (userMenuOpen) {
+            document.addEventListener('mousedown', handleClickOutside);
+        }
+
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, [userMenuOpen]);
+
+    const handleLogout = () => {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+        localStorage.removeItem('userId');
+        setIsAuthenticated(false);
+        setUsername('');
+        setUserMenuOpen(false);
+        navigate('/');
+    };
 
     const scrollToSection = (id) => {
         const element = document.getElementById(id);
@@ -27,12 +67,52 @@ export default function Landing() {
                 </div>
 
                 <div className="flex gap-3 items-center">
-                    <button onClick={() => navigate('/auth/login')} className="px-5 py-2 text-gray-700 text-sm font-medium hover:text-teal-600 transition-colors">
-                        Sign In
-                    </button>
-                    <button onClick={() => navigate('/auth/signup')} className="px-5 py-2 bg-teal-500 rounded-md text-white text-sm font-semibold hover:bg-teal-600 transition-all">
-                        Get Started Free
-                    </button>
+                    {isAuthenticated ? (
+                        <div className="relative" ref={userMenuRef}>
+                            <button
+                                onClick={() => setUserMenuOpen(!userMenuOpen)}
+                                className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-full hover:border-teal-500 transition-all shadow-sm"
+                            >
+                                <div className="w-8 h-8 rounded-full bg-teal-500 text-white flex items-center justify-center font-bold text-sm uppercase">
+                                    {username.charAt(0)}
+                                </div>
+                                <span className="text-sm font-medium text-gray-900">{username}</span>
+                                <ChevronDown size={16} className="text-gray-500" />
+                            </button>
+
+                            {userMenuOpen && (
+                                <div className="absolute right-0 top-full mt-2 w-56 bg-white rounded-xl shadow-xl border border-gray-100 py-2 overflow-hidden z-50">
+                                    <div className="px-4 py-3 border-b border-gray-100">
+                                        <p className="text-sm font-semibold text-gray-900">{username}</p>
+                                        <p className="text-xs text-gray-500">Cloud Engineer</p>
+                                    </div>
+                                    <button
+                                        onClick={() => { navigate('/cloud/dashboard'); setUserMenuOpen(false); }}
+                                        className="flex items-center gap-3 w-full px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+                                    >
+                                        <LayoutDashboard size={16} />
+                                        Dashboard
+                                    </button>
+                                    <button
+                                        onClick={handleLogout}
+                                        className="flex items-center gap-3 w-full px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 transition-colors"
+                                    >
+                                        <LogOut size={16} />
+                                        Sign Out
+                                    </button>
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <>
+                            <button onClick={() => navigate('/auth/login')} className="px-5 py-2 text-gray-700 text-sm font-medium hover:text-teal-600 transition-colors">
+                                Sign In
+                            </button>
+                            <button onClick={() => navigate('/auth/signup')} className="px-5 py-2 bg-teal-500 rounded-md text-white text-sm font-semibold hover:bg-teal-600 transition-all">
+                                Get Started Free
+                            </button>
+                        </>
+                    )}
                 </div>
             </nav>
 

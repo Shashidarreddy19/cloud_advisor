@@ -41,6 +41,10 @@ export default function UnifiedSidebar() {
 
     const isActive = (path) => location.pathname === path;
 
+    // Determine current mode based on pathname
+    const currentMode = location.pathname.startsWith('/csv') ? 'csv' : 'cloud';
+    const helpPath = `/${currentMode}/help`;
+
     return (
         <aside style={{
             width: 'var(--az-sidebar-w)',
@@ -125,22 +129,22 @@ export default function UnifiedSidebar() {
                     <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
                         <li>
                             <button
-                                onClick={() => navigate('/help')}
+                                onClick={() => navigate(helpPath)}
                                 style={{
                                     width: '100%', display: 'flex', alignItems: 'center', gap: 9,
                                     padding: '7px 16px 7px 12px',
                                     border: 'none',
-                                    borderLeft: `3px solid ${isActive('/help') ? 'var(--az-blue)' : 'transparent'}`,
-                                    background: isActive('/help') ? 'var(--az-blue-light)' : 'transparent',
-                                    color: isActive('/help') ? 'var(--az-blue)' : 'var(--az-text)',
+                                    borderLeft: `3px solid ${isActive(helpPath) ? 'var(--az-blue)' : 'transparent'}`,
+                                    background: isActive(helpPath) ? 'var(--az-blue-light)' : 'transparent',
+                                    color: isActive(helpPath) ? 'var(--az-blue)' : 'var(--az-text)',
                                     cursor: 'pointer', textAlign: 'left',
-                                    fontSize: 13, fontWeight: isActive('/help') ? 600 : 400,
+                                    fontSize: 13, fontWeight: isActive(helpPath) ? 600 : 400,
                                     transition: 'background 0.12s',
                                 }}
-                                onMouseEnter={e => { if (!isActive('/help')) { e.currentTarget.style.background = '#F3F2F1'; } }}
-                                onMouseLeave={e => { if (!isActive('/help')) { e.currentTarget.style.background = 'transparent'; } }}
+                                onMouseEnter={e => { if (!isActive(helpPath)) { e.currentTarget.style.background = '#F3F2F1'; } }}
+                                onMouseLeave={e => { if (!isActive(helpPath)) { e.currentTarget.style.background = 'transparent'; } }}
                             >
-                                <HelpCircle size={15} style={{ color: isActive('/help') ? 'var(--az-blue)' : 'var(--az-text-2)', flexShrink: 0 }} />
+                                <HelpCircle size={15} style={{ color: isActive(helpPath) ? 'var(--az-blue)' : 'var(--az-text-2)', flexShrink: 0 }} />
                                 Help
                             </button>
                         </li>
