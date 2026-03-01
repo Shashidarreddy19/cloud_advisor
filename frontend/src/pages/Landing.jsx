@@ -44,6 +44,14 @@ export default function Landing() {
         navigate('/');
     };
 
+    const handleGetStarted = () => {
+        if (isAuthenticated) {
+            navigate('/cloud/dashboard');
+        } else {
+            navigate('/auth/signup');
+        }
+    };
+
     const scrollToSection = (id) => {
         const element = document.getElementById(id);
         if (element) {
@@ -108,7 +116,7 @@ export default function Landing() {
                             <button onClick={() => navigate('/auth/login')} className="px-5 py-2 text-gray-700 text-sm font-medium hover:text-teal-600 transition-colors">
                                 Sign In
                             </button>
-                            <button onClick={() => navigate('/auth/signup')} className="px-5 py-2 bg-teal-500 rounded-md text-white text-sm font-semibold hover:bg-teal-600 transition-all">
+                            <button onClick={handleGetStarted} className="px-5 py-2 bg-teal-500 rounded-md text-white text-sm font-semibold hover:bg-teal-600 transition-all">
                                 Get Started Free
                             </button>
                         </>
@@ -127,12 +135,12 @@ export default function Landing() {
                         <p className="text-lg text-gray-600 mb-8 leading-relaxed">
                             Analyze AWS, Azure, and GCP resources using real usage data to identify waste, right-size instances, and reduce cloud spend — safely and transparently.
                         </p>
-                        <button onClick={() => navigate('/auth/signup')} className="px-7 py-3 bg-teal-500 rounded-md text-white text-base font-semibold hover:bg-teal-600 transition-all">
+                        <button onClick={handleGetStarted} className="px-7 py-3 bg-teal-500 rounded-md text-white text-base font-semibold hover:bg-teal-600 transition-all">
                             Get Started
                         </button>
                     </div>
                     <div className="flex justify-center">
-                        <img src="/Illustration.png" alt="Cloud Optimization" className="w-full max-w-md" />
+                        <img src="/Illustration.png" alt="Cloud Optimization" className="w-full max-w-sm" />
                     </div>
                 </div>
             </section>
@@ -546,7 +554,7 @@ export default function Landing() {
                     <p className="text-lg text-gray-600 mb-8">
                         No risky automation. No blind changes. Just clear, data-driven insights.
                     </p>
-                    <button onClick={() => navigate('/auth/signup')} className="px-10 py-3.5 bg-teal-500 rounded-md text-white text-base font-semibold hover:bg-teal-600 transition-all shadow-lg">
+                    <button onClick={handleGetStarted} className="px-10 py-3.5 bg-teal-500 rounded-md text-white text-base font-semibold hover:bg-teal-600 transition-all shadow-lg">
                         Get Started Free
                     </button>
                 </div>
